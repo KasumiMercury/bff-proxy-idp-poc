@@ -1,0 +1,16 @@
+[
+  {
+    "id": "web-app",
+    "type": "web",
+    "secret": "web-secret",
+    "redirect_uris": [
+      "http://localhost:3000/callback",
+      "http://localhost:3000/api/auth/callback",
+      "http://localhost:3000/api/internal/auth/callback"
+    ],
+    "post_logout_redirect_uris": [
+      "http://localhost:3000/logout-complete",
+      "http://localhost:3000/"
+    ]
+  }
+]

@@ -1,0 +1,28 @@
+[
+  {
+    "id": "user-1",
+    "username": "user1",
+    "password": "user1-password",
+    "first_name": "User",
+    "last_name": "Example",
+    "email": "user@example.com",
+    "email_verified": true,
+    "phone": "",
+    "phone_verified": false,
+    "preferred_language": "en",
+    "is_admin": true
+  },
+  {
+    "id": "user-2",
+    "username": "user2",
+    "password": "user2-password",
+    "first_name": "User2",
+    "last_name": "Example",
+    "email": "user2@example.com",
+    "email_verified": true,
+    "phone": "",
+    "phone_verified": false,
+    "preferred_language": "ja",
+    "is_admin": false
+  }
+]
