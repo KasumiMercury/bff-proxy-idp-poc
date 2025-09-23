@@ -6,7 +6,7 @@ import (
 	"os"
 	"strings"
 
-	exampleStorage "github.com/zitadel/oidc/v2/example/server/storage"
+	"github.com/zitadel/oidc/v3/example/server/storage"
 )
 
 var postLogoutByClient = make(map[string][]string)
@@ -19,7 +19,7 @@ type ClientRecord struct {
 	PostLogoutRedirectURIs []string `json:"post_logout_redirect_uris"`
 }
 
-func LoadClients(path string) ([]*exampleStorage.Client, error) {
+func LoadClients(path string) ([]*storage.Client, error) {
 	file, err := os.Open(path)
 	if err != nil {
 		return nil, fmt.Errorf("failed to open clients file: %w", err)
@@ -35,7 +35,7 @@ func LoadClients(path string) ([]*exampleStorage.Client, error) {
 		return nil, fmt.Errorf("clients file must define at least one client")
 	}
 
-	clients := make([]*exampleStorage.Client, 0, len(records))
+	clients := make([]*storage.Client, 0, len(records))
 
 	postLogout := make(map[string][]string, len(records))
 
@@ -45,21 +45,21 @@ func LoadClients(path string) ([]*exampleStorage.Client, error) {
 		}
 
 		clientType := strings.ToLower(record.Type)
-		var client *exampleStorage.Client
+		var client *storage.Client
 
 		switch clientType {
 		case "web", "confidential":
 			if record.Secret == "" {
 				return nil, fmt.Errorf("web client %s requires a secret", record.ID)
 			}
-			client = exampleStorage.WebClient(record.ID, record.Secret, record.RedirectURIs...)
+			client = storage.WebClient(record.ID, record.Secret, record.RedirectURIs...)
 		case "native", "public":
-			client = exampleStorage.NativeClient(record.ID, record.RedirectURIs...)
+			client = storage.NativeClient(record.ID, record.RedirectURIs...)
 		case "device":
 			if record.Secret == "" {
 				return nil, fmt.Errorf("device client %s requires a secret", record.ID)
 			}
-			client = exampleStorage.DeviceClient(record.ID, record.Secret)
+			client = storage.DeviceClient(record.ID, record.Secret)
 		default:
 			return nil, fmt.Errorf("unsupported client type %q for client %s", record.Type, record.ID)
 		}

@@ -6,7 +6,7 @@ import (
 	"os"
 	"strings"
 
-	exampleStorage "github.com/zitadel/oidc/v2/example/server/storage"
+	"github.com/zitadel/oidc/v3/example/server/storage"
 	"golang.org/x/text/language"
 )
 
@@ -25,8 +25,8 @@ type UserRecord struct {
 }
 
 type UserStore struct {
-	usersByID       map[string]*exampleStorage.User
-	usersByUsername map[string]*exampleStorage.User
+	usersByID       map[string]*storage.User
+	usersByUsername map[string]*storage.User
 	exampleClientID string
 }
 
@@ -43,8 +43,8 @@ func LoadUserStore(path string) (*UserStore, error) {
 	}
 
 	store := &UserStore{
-		usersByID:       make(map[string]*exampleStorage.User),
-		usersByUsername: make(map[string]*exampleStorage.User),
+		usersByID:       make(map[string]*storage.User),
+		usersByUsername: make(map[string]*storage.User),
 	}
 
 	for _, record := range records {
@@ -57,7 +57,7 @@ func LoadUserStore(path string) (*UserStore, error) {
 			preferredLang = language.Make(record.PreferredLanguage)
 		}
 
-		user := &exampleStorage.User{
+		user := &storage.User{
 			ID:                record.ID,
 			Username:          record.Username,
 			Password:          record.Password,
@@ -86,10 +86,10 @@ func (s *UserStore) ExampleClientID() string {
 	return s.exampleClientID
 }
 
-func (s *UserStore) GetUserByID(id string) *exampleStorage.User {
+func (s *UserStore) GetUserByID(id string) *storage.User {
 	return s.usersByID[id]
 }
 
-func (s *UserStore) GetUserByUsername(username string) *exampleStorage.User {
+func (s *UserStore) GetUserByUsername(username string) *storage.User {
 	return s.usersByUsername[username]
 }

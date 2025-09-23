@@ -5,6 +5,7 @@ import (
 	"errors"
 	"fmt"
 	"log"
+	"log/slog"
 	"net"
 	"net/http"
 	"os"
@@ -13,9 +14,9 @@ import (
 	"syscall"
 	"time"
 
-	exampleop "github.com/zitadel/oidc/v2/example/server/exampleop"
-	exampleStorage "github.com/zitadel/oidc/v2/example/server/storage"
-	"github.com/zitadel/oidc/v2/pkg/op"
+	"github.com/zitadel/oidc/v3/example/server/exampleop"
+	"github.com/zitadel/oidc/v3/example/server/storage"
+	"github.com/zitadel/oidc/v3/pkg/op"
 
 	"idp/internal/data"
 )
@@ -30,11 +31,18 @@ type Config struct {
 func main() {
 	cfg := loadConfig()
 
+	logger := slog.New(
+		slog.NewTextHandler(os.Stderr, &slog.HandlerOptions{
+			AddSource: true,
+			Level:     slog.LevelDebug,
+		}),
+	)
+
 	clients, err := data.LoadClients(cfg.ClientsPath)
 	if err != nil {
 		log.Fatalf("failed to load clients: %v", err)
 	}
-	exampleStorage.RegisterClients(clients...)
+	storage.RegisterClients(clients...)
 
 	userStore, err := data.LoadUserStore(cfg.UsersPath)
 	if err != nil {
@@ -47,16 +55,7 @@ func main() {
 
 	store := newStorageWithLogout(userStore)
 
-	router := exampleop.SetupServer(cfg.Issuer, store)
-	router.Use(requestLogger)
-	router.HandleFunc("/healthz", func(w http.ResponseWriter, r *http.Request) {
-		if err := store.Health(r.Context()); err != nil {
-			http.Error(w, fmt.Sprintf("unhealthy: %v", err), http.StatusServiceUnavailable)
-			return
-		}
-		w.WriteHeader(http.StatusOK)
-		_, _ = w.Write([]byte("ok"))
-	}).Methods(http.MethodGet)
+	router := exampleop.SetupServer(cfg.Issuer, store, logger, false)
 
 	srv := &http.Server{
 		Addr:    cfg.HTTPAddr,
@@ -139,25 +138,7 @@ func waitForShutdown(server *http.Server) {
 }
 
 func newStorageWithLogout(userStore *data.UserStore) *storageWithLogout {
-	return &storageWithLogout{Storage: exampleStorage.NewStorage(userStore)}
-}
-
-func requestLogger(next http.Handler) http.Handler {
-	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		start := time.Now()
-		record := &responseRecorder{ResponseWriter: w, status: http.StatusOK}
-		next.ServeHTTP(record, r)
-		duration := time.Since(start)
-		log.Printf(
-			"idp request %s %s -> %d (%d bytes) in %s from %s",
-			r.Method,
-			r.URL.Path,
-			record.status,
-			record.size,
-			duration,
-			r.RemoteAddr,
-		)
-	})
+	return &storageWithLogout{Storage: storage.NewStorage(userStore)}
 }
 
 type responseRecorder struct {
@@ -178,7 +159,7 @@ func (r *responseRecorder) Write(b []byte) (int, error) {
 }
 
 type storageWithLogout struct {
-	*exampleStorage.Storage
+	*storage.Storage
 }
 
 func (s *storageWithLogout) GetClientByClientID(ctx context.Context, clientID string) (op.Client, error) {
