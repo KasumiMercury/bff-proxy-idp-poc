@@ -1,5 +1,6 @@
 import { type NextRequest, NextResponse } from "next/server";
 
+import { getAppBaseUrl } from "@/features/auth/server/url";
 import { getConfig } from "@/lib/config";
 
 const BODYLESS_METHODS = new Set(["GET", "HEAD", "OPTIONS"]);
@@ -87,13 +88,54 @@ async function proxy(
   responseHeaders.delete("transfer-encoding");
   rewriteLocationHeader(responseHeaders, request.nextUrl, issuer);
 
-  const response = new NextResponse(upstream.body, {
+  const contentType = upstream.headers.get("content-type") ?? "";
+  const shouldRewriteHtml = contentType.includes("text/html");
+
+  let responseBody: BodyInit | null | undefined;
+  if (shouldRewriteHtml) {
+    const html = await upstream.text();
+    responseBody = rewriteHtmlDocument(html, new URL(issuer), request);
+  } else {
+    responseBody = upstream.body;
+  }
+
+  const response = new NextResponse(responseBody, {
     status: upstream.status,
     headers: responseHeaders,
   });
 
   applyCorsHeaders(response);
   return response;
+}
+
+function rewriteHtmlDocument(
+  html: string,
+  issuerUrl: URL,
+  request: NextRequest,
+): string {
+  const baseUrl = getAppBaseUrl(request);
+  const proxiedAbsolutePrefix = `${baseUrl}/api/oidc/`;
+  const proxiedPathPrefix = "/api/oidc/";
+  const escapedOrigin = issuerUrl.origin.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+
+  const absolutePattern = new RegExp(
+    `((?:href|src|action)=['"])${escapedOrigin}/(?!api/oidc)([^'"]*)`,
+    "g",
+  );
+  const rootPattern =
+    /((?:href|src|action)=['"])\/(?!api\/oidc)([^'"]*)/g;
+
+  return html
+    .replace(
+      absolutePattern,
+      (_match, prefix: string, rest: string) =>
+        `${prefix}${proxiedAbsolutePrefix}${rest}`,
+    )
+    .replace(
+      rootPattern,
+      (_match, prefix: string, rest: string) =>
+        `${prefix}${proxiedPathPrefix}${rest}`,
+    );
 }
 
 function buildTargetUrl(

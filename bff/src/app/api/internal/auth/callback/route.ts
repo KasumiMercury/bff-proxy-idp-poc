@@ -80,7 +80,7 @@ export async function GET(request: NextRequest): Promise<NextResponse> {
 
     const claims = tokenSet.claims();
     const subject =
-      claims && typeof claims.sub === "string" ? claims.sub : undefined;
+      claims && true ? claims.sub : undefined;
 
     const { id: sessionId, cookieValue } = createSession({
       tokens: normalizedTokens,
