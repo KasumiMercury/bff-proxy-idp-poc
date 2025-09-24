@@ -1,8 +1,9 @@
 import { cookies, headers } from "next/headers";
 
+import type { JSX } from "react";
+
 import { getSessionFromCookie } from "@/features/auth/server/session-store";
 import { getConfig } from "@/lib/config";
-import type {JSX} from "react";
 
 interface SessionView {
   authenticated: boolean;

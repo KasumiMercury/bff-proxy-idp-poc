@@ -122,8 +122,7 @@ function rewriteHtmlDocument(
     `((?:href|src|action)=['"])${escapedOrigin}/(?!api/oidc)([^'"]*)`,
     "g",
   );
-  const rootPattern =
-    /((?:href|src|action)=['"])\/(?!api\/oidc)([^'"]*)/g;
+  const rootPattern = /((?:href|src|action)=['"])\/(?!api\/oidc)([^'"]*)/g;
 
   return html
     .replace(

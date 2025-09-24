@@ -8,24 +8,26 @@ import (
 	"log/slog"
 	"net"
 	"net/http"
+	"net/url"
 	"os"
 	"os/signal"
 	"strings"
 	"syscall"
 	"time"
 
-	"github.com/zitadel/oidc/v3/example/server/exampleop"
 	"github.com/zitadel/oidc/v3/example/server/storage"
 	"github.com/zitadel/oidc/v3/pkg/op"
 
 	"idp/internal/data"
+	internalop "idp/internal/op"
 )
 
 type Config struct {
-	HTTPAddr    string
-	Issuer      string
-	UsersPath   string
-	ClientsPath string
+	HTTPAddr         string
+	Issuer           string
+	UsersPath        string
+	ClientsPath      string
+	LoginURLTemplate string
 }
 
 func main() {
@@ -53,9 +55,9 @@ func main() {
 		userStore.SetExampleClientID(clients[0].GetID())
 	}
 
-	store := newStorageWithLogout(userStore)
+	store := newStorageWithOverrides(userStore, cfg.LoginURLTemplate)
 
-	router := exampleop.SetupServer(cfg.Issuer, store, logger, false)
+	router := internalop.SetupServer(cfg.Issuer, store, logger, false)
 
 	srv := &http.Server{
 		Addr:    cfg.HTTPAddr,
@@ -81,10 +83,11 @@ func loadConfig() Config {
 	}
 
 	return Config{
-		HTTPAddr:    httpAddr,
-		Issuer:      issuer,
-		UsersPath:   getEnv("IDP_USERS_PATH", "data/users.json"),
-		ClientsPath: getEnv("IDP_CLIENTS_PATH", "data/clients.json"),
+		HTTPAddr:         httpAddr,
+		Issuer:           issuer,
+		UsersPath:        getEnv("IDP_USERS_PATH", "data/users.json"),
+		ClientsPath:      getEnv("IDP_CLIENTS_PATH", "data/clients.json"),
+		LoginURLTemplate: getEnv("IDP_LOGIN_URL_TEMPLATE", ""),
 	}
 }
 
@@ -137,8 +140,11 @@ func waitForShutdown(server *http.Server) {
 	}
 }
 
-func newStorageWithLogout(userStore *data.UserStore) *storageWithLogout {
-	return &storageWithLogout{Storage: storage.NewStorage(userStore)}
+func newStorageWithOverrides(userStore *data.UserStore, loginTemplate string) *storageWithOverrides {
+	return &storageWithOverrides{
+		Storage:          storage.NewStorage(userStore),
+		loginURLTemplate: loginTemplate,
+	}
 }
 
 type responseRecorder struct {
@@ -158,49 +164,66 @@ func (r *responseRecorder) Write(b []byte) (int, error) {
 	return n, err
 }
 
-type storageWithLogout struct {
+type storageWithOverrides struct {
 	*storage.Storage
+	loginURLTemplate string
 }
 
-func (s *storageWithLogout) GetClientByClientID(ctx context.Context, clientID string) (op.Client, error) {
+func (s *storageWithOverrides) GetClientByClientID(ctx context.Context, clientID string) (op.Client, error) {
 	client, err := s.Storage.GetClientByClientID(ctx, clientID)
 	if err != nil {
 		return nil, err
 	}
 
 	postLogout := data.PostLogoutRedirectURIs(clientID)
-	if len(postLogout) == 0 {
-		return client, nil
-	}
 
-	return clientWithLogout{
-		Client:     client,
-		postLogout: postLogout,
+	return clientWithOverrides{
+		Client:           client,
+		postLogout:       postLogout,
+		loginURLTemplate: s.loginURLTemplate,
 	}, nil
 }
 
-type clientWithLogout struct {
+type clientWithOverrides struct {
 	op.Client
-	postLogout []string
+	postLogout       []string
+	loginURLTemplate string
 }
 
-func (c clientWithLogout) PostLogoutRedirectURIs() []string {
+func (c clientWithOverrides) PostLogoutRedirectURIs() []string {
 	if len(c.postLogout) == 0 {
 		return c.Client.PostLogoutRedirectURIs()
 	}
 	return append([]string(nil), c.postLogout...)
 }
 
-func (c clientWithLogout) RedirectURIGlobs() []string {
+func (c clientWithOverrides) RedirectURIGlobs() []string {
 	if with, ok := c.Client.(op.HasRedirectGlobs); ok {
 		return with.RedirectURIGlobs()
 	}
 	return nil
 }
 
-func (c clientWithLogout) PostLogoutRedirectURIGlobs() []string {
+func (c clientWithOverrides) PostLogoutRedirectURIGlobs() []string {
 	if with, ok := c.Client.(op.HasRedirectGlobs); ok {
 		return with.PostLogoutRedirectURIGlobs()
 	}
 	return nil
+}
+
+func (c clientWithOverrides) LoginURL(id string) string {
+	if c.loginURLTemplate == "" {
+		return c.Client.LoginURL(id)
+	}
+	if strings.Contains(c.loginURLTemplate, "%s") {
+		return fmt.Sprintf(c.loginURLTemplate, url.QueryEscape(id))
+	}
+	parsed, err := url.Parse(c.loginURLTemplate)
+	if err != nil {
+		return c.Client.LoginURL(id)
+	}
+	query := parsed.Query()
+	query.Set("authRequestID", id)
+	parsed.RawQuery = query.Encode()
+	return parsed.String()
 }

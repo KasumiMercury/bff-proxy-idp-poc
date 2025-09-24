@@ -79,8 +79,7 @@ export async function GET(request: NextRequest): Promise<NextResponse> {
     }
 
     const claims = tokenSet.claims();
-    const subject =
-      claims && true ? claims.sub : undefined;
+    const subject = claims && true ? claims.sub : undefined;
 
     const { id: sessionId, cookieValue } = createSession({
       tokens: normalizedTokens,

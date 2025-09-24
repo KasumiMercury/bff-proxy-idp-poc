@@ -42,12 +42,20 @@ export async function GET(request: NextRequest): Promise<NextResponse> {
 
   const authorizationUrl = buildProxiedUrl(baseUrl, providerAuthorizationUrl);
 
-  logInfo("internal-auth/login", "redirecting to authorization endpoint", {
+  const { location: loginRedirect, cookies: upstreamCookies } =
+    await resolveLoginRedirect(authorizationUrl, request);
+
+  const target = loginRedirect ?? authorizationUrl;
+
+  logInfo("internal-auth/login", "redirecting to authorization flow", {
     state,
-    authorizationUrl,
+    target,
   });
 
-  const response = NextResponse.redirect(authorizationUrl, { status: 302 });
+  const response = NextResponse.redirect(target, { status: 302 });
+  for (const cookie of upstreamCookies) {
+    response.headers.append("set-cookie", cookie);
+  }
   setStateCookie(response, state, request);
   applyCorsHeaders(response, cors.allowedOrigin, ["GET"], request);
   return response;
@@ -76,4 +84,39 @@ function sanitizeReturnPath(returnTo: string | null): string {
   } catch (_error) {
     return "/";
   }
+}
+
+async function resolveLoginRedirect(
+  authorizationUrl: string,
+  request: NextRequest,
+): Promise<{ location: string | null; cookies: string[] }> {
+  try {
+    const response = await fetch(authorizationUrl, {
+      method: "GET",
+      headers: buildProxyHeaders(request),
+      redirect: "manual",
+      cache: "no-store",
+    });
+
+    const cookies = response.headers.getSetCookie?.() ?? [];
+    if (response.status >= 300 && response.status < 400) {
+      const location = response.headers.get("location");
+      return { location, cookies };
+    }
+    return { location: null, cookies };
+  } catch (error) {
+    logInfo("internal-auth/login", "failed to resolve login redirect", {
+      error,
+    });
+    return { location: null, cookies: [] };
+  }
+}
+
+function buildProxyHeaders(request: NextRequest): HeadersInit {
+  const headers = new Headers();
+  const cookie = request.headers.get("cookie");
+  if (cookie) {
+    headers.set("cookie", cookie);
+  }
+  return headers;
 }
