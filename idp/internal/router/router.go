@@ -1,6 +1,7 @@
 package router
 
 import (
+	"idp/internal/auth"
 	internalop "idp/internal/op"
 	"log/slog"
 	"net/http"
@@ -9,12 +10,12 @@ import (
 
 	"github.com/go-chi/chi/v5"
 	"github.com/zitadel/logging"
-	"github.com/zitadel/oidc/v3/pkg/op"
+	"github.com/zitadel/oidc/v3/example/server/storage"
 )
 
 func NewRouter(
 	issuer string,
-	storage op.Storage,
+	storage *storage.Storage,
 	logger *slog.Logger,
 ) chi.Router {
 	router := chi.NewRouter()
@@ -26,6 +27,7 @@ func NewRouter(
 	))
 
 	provider, err := internalop.NewOpenIDProvider(
+		logger,
 		storage,
 		issuer,
 	)
@@ -33,6 +35,9 @@ func NewRouter(
 		slog.Error("failed to create openid provider", "error", err)
 		os.Exit(1)
 	}
+
+	l := auth.NewLogin(storage)
+	router.Mount("/login", http.StripPrefix("/login", l.Router()))
 
 	handler := http.Handler(provider)
 	router.Mount("/", handler)
