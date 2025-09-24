@@ -1,0 +1,26 @@
+{{ define "consent" -}}
+<!DOCTYPE html>
+<html>
+    <head>
+        <meta charset="UTF-8">
+        <title>Authorize</title>
+    </head>
+    <body style="display: flex; align-items: center; justify-content: center; min-height: 100vh; font-family: sans-serif;">
+        <div style="max-width: 420px; width: 100%; padding: 24px; border: 1px solid #ccc; border-radius: 8px; box-shadow: 0 2px 6px rgba(0,0,0,0.1);">
+            <h1 style="font-size: 1.4rem; margin-top: 0;">Authorize Access</h1>
+            <p style="margin-bottom: 1rem;">Client <strong>{{.ClientID}}</strong> is requesting the following permissions:</p>
+            <ul>
+                {{ range .Scopes }}
+                <li>{{ . }}</li>
+                {{ else }}
+                <li>No scopes requested.</li>
+                {{ end }}
+            </ul>
+            <form method="POST" action="/login/consent" style="margin-top: 1.5rem;">
+                <input type="hidden" name="id" value="{{.ID}}">
+                <button type="submit" style="padding: 0.5rem 1rem; font-size: 1rem;">Allow</button>
+            </form>
+        </div>
+    </body>
+</html>
+{{- end }}
