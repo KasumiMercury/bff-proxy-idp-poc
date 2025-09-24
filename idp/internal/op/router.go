@@ -35,7 +35,7 @@ func NewRouter(
 		os.Exit(1)
 	}
 
-	l := NewLogin(storage, op.NewIssuerInterceptor(provider.IssuerFromRequest))
+	l := NewLogin(storage, op.NewIssuerInterceptor(provider.IssuerFromRequest), op.AuthCallbackURL(provider))
 	router.Mount("/login", http.StripPrefix("/login", l.Router()))
 
 	handler := http.Handler(provider)

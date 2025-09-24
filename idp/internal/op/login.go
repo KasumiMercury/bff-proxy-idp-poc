@@ -1,8 +1,10 @@
 package op
 
 import (
+	"context"
 	"encoding/json"
 	"fmt"
+	"log"
 	"log/slog"
 	"net/http"
 
@@ -16,13 +18,15 @@ type authenticate interface {
 }
 
 type Login struct {
-	router  chi.Router
-	storage *storage.Storage
+	router   chi.Router
+	storage  *storage.Storage
+	callback func(context.Context, string) string
 }
 
-func NewLogin(storage *storage.Storage, issuerInterceptor *op.IssuerInterceptor) *Login {
+func NewLogin(storage *storage.Storage, issuerInterceptor *op.IssuerInterceptor, callback func(context.Context, string) string) *Login {
 	l := &Login{
-		storage: storage,
+		storage:  storage,
+		callback: callback,
 	}
 	l.router = l.newRouter(issuerInterceptor)
 	return l
@@ -60,7 +64,9 @@ func (l *Login) handler(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, "invalid credentials", http.StatusUnauthorized)
 	}
 
-	w.WriteHeader(http.StatusOK)
+	log.Println(l.callback(r.Context(), payload.ID))
+
+	http.Redirect(w, r, l.callback(r.Context(), payload.ID), http.StatusFound)
 }
 
 func (l *Login) renderLoginPage(w http.ResponseWriter, r *http.Request) {
