@@ -11,6 +11,7 @@ import (
 	"github.com/go-chi/chi/v5"
 	"github.com/zitadel/logging"
 	"github.com/zitadel/oidc/v3/example/server/storage"
+	"github.com/zitadel/oidc/v3/pkg/op"
 )
 
 func NewRouter(
@@ -36,7 +37,7 @@ func NewRouter(
 		os.Exit(1)
 	}
 
-	l := auth.NewLogin(storage)
+	l := auth.NewLogin(storage, op.NewIssuerInterceptor(provider.IssuerFromRequest))
 	router.Mount("/login", http.StripPrefix("/login", l.Router()))
 
 	handler := http.Handler(provider)

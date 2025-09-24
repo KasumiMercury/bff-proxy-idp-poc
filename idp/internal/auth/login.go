@@ -6,8 +6,8 @@ import (
 	"net/http"
 
 	"github.com/go-chi/chi/v5"
-	"github.com/google/uuid"
 	"github.com/zitadel/oidc/v3/example/server/storage"
+	"github.com/zitadel/oidc/v3/pkg/op"
 )
 
 type authenticate interface {
@@ -19,17 +19,17 @@ type Login struct {
 	storage *storage.Storage
 }
 
-func NewLogin(storage *storage.Storage) *Login {
+func NewLogin(storage *storage.Storage, issuerInterceptor *op.IssuerInterceptor) *Login {
 	l := &Login{
 		storage: storage,
 	}
-	l.router = l.newRouter()
+	l.router = l.newRouter(issuerInterceptor)
 	return l
 }
 
-func (l *Login) newRouter() chi.Router {
+func (l *Login) newRouter(issuerInterceptor *op.IssuerInterceptor) chi.Router {
 	router := chi.NewRouter()
-	router.Post("/", l.handler)
+	router.Post("/username", issuerInterceptor.HandlerFunc(l.handler))
 	return router
 }
 
@@ -39,6 +39,7 @@ func (l *Login) Router() chi.Router {
 
 func (l *Login) handler(w http.ResponseWriter, r *http.Request) {
 	var payload struct {
+		ID       string `json:"id"`
 		Username string `json:"username"`
 		Password string `json:"password"`
 	}
@@ -52,7 +53,7 @@ func (l *Login) handler(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, "username and password are required", http.StatusBadRequest)
 	}
 
-	if err := l.storage.CheckUsernamePassword(payload.Username, payload.Password, uuid.New().String()); err != nil {
+	if err := l.storage.CheckUsernamePassword(payload.Username, payload.Password, payload.ID); err != nil {
 		slog.Error("login failed", "error", err)
 		http.Error(w, "invalid credentials", http.StatusUnauthorized)
 	}
