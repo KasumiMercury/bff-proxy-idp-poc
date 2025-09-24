@@ -4,7 +4,7 @@ import (
 	"context"
 	"errors"
 	"idp/internal/config"
-	oldop "idp/internal/op/old"
+	"idp/internal/router"
 	"log"
 	"log/slog"
 	"net/http"
@@ -45,17 +45,21 @@ func main() {
 
 	store := storage.NewStorage(userStore)
 
-	router := oldop.SetupServer(cfg.Issuer, store, logger, false)
+	r := router.NewRouter(cfg.Issuer, store, logger)
 
 	srv := &http.Server{
 		Addr:    cfg.HTTPAddr,
-		Handler: router,
+		Handler: r,
 	}
 
 	go func() {
-		log.Printf("OIDC provider starting on %s (issuer %s)", cfg.HTTPAddr, cfg.Issuer)
+		slog.Info(
+			"OIDC provider starting",
+			"address", cfg.HTTPAddr,
+			"issuer", cfg.Issuer,
+		)
 		if err := srv.ListenAndServe(); err != nil && !errors.Is(err, http.ErrServerClosed) {
-			log.Fatalf("http server failed: %v", err)
+			slog.Error("http server failed", "error", err)
 		}
 	}()
 
