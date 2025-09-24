@@ -1,8 +1,6 @@
-package router
+package op
 
 import (
-	"idp/internal/auth"
-	internalop "idp/internal/op"
 	"log/slog"
 	"net/http"
 	"os"
@@ -27,7 +25,7 @@ func NewRouter(
 		}),
 	))
 
-	provider, err := internalop.NewOpenIDProvider(
+	provider, err := NewOpenIDProvider(
 		logger,
 		storage,
 		issuer,
@@ -37,7 +35,7 @@ func NewRouter(
 		os.Exit(1)
 	}
 
-	l := auth.NewLogin(storage, op.NewIssuerInterceptor(provider.IssuerFromRequest))
+	l := NewLogin(storage, op.NewIssuerInterceptor(provider.IssuerFromRequest))
 	router.Mount("/login", http.StripPrefix("/login", l.Router()))
 
 	handler := http.Handler(provider)

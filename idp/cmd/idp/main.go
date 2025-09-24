@@ -4,7 +4,7 @@ import (
 	"context"
 	"errors"
 	"idp/internal/config"
-	"idp/internal/router"
+	"idp/internal/op"
 	"log"
 	"log/slog"
 	"net/http"
@@ -45,7 +45,7 @@ func main() {
 
 	store := storage.NewStorage(userStore)
 
-	r := router.NewRouter(cfg.Issuer, store, logger)
+	r := op.NewRouter(cfg.Issuer, store, logger)
 
 	srv := &http.Server{
 		Addr:    cfg.HTTPAddr,
