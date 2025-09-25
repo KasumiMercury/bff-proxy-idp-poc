@@ -9,15 +9,12 @@ type RouteContext = {
   params: RouteParams | Promise<RouteParams>;
 };
 
-const PROXY_PREFIX = "/api/oidc";
-
 export const dynamic = "force-dynamic";
 
 const handler = async (request: NextRequest, context: RouteContext) => {
   const params = await context.params;
   return proxyToIdp(request, {
     pathSegments: params?.path ?? [],
-    proxyPrefix: PROXY_PREFIX,
     config: {
       debug: {
         enableRequestLogging: true,

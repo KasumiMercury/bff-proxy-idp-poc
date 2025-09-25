@@ -1,13 +1,10 @@
 import type { NextRequest } from "next/server";
 import { proxyToIdp } from "@/lib/proxy";
 
-const PROXY_PREFIX = "/api/oidc";
-
 export const dynamic = "force-dynamic";
 
 const handler = (request: NextRequest) =>
   proxyToIdp(request, {
-    proxyPrefix: PROXY_PREFIX,
     config: {
       debug: {
         enableRequestLogging: true,
