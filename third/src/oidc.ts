@@ -39,11 +39,7 @@ export async function buildAuthorizationUrl(
   codeChallenge: string,
 ): Promise<string> {
   const metadata = await getMetadata(config);
-  const authorizationUrl = buildBffPublicUrl(
-    config,
-    metadata.authorization_endpoint,
-  );
-
+  const authorizationUrl = convertToBffPublicUrl(config, metadata.authorization_endpoint);
   const url = new URL(authorizationUrl);
   url.searchParams.set("response_type", "code");
   url.searchParams.set("client_id", config.clientId);
@@ -68,8 +64,7 @@ export async function exchangeAuthorizationCode(
     code_verifier: codeVerifier,
   });
 
-  const tokenUrl = buildBffApiUrl(config, metadata.token_endpoint);
-
+  const tokenUrl = convertToBffApiUrl(config, metadata.token_endpoint);
   const response = await fetch(tokenUrl, {
     method: "POST",
     headers: {
@@ -115,7 +110,7 @@ export async function fetchUserInfo(
   accessToken: string,
 ): Promise<Record<string, unknown>> {
   const metadata = await getMetadata(config);
-  const userInfoUrl = buildBffApiUrl(config, metadata.userinfo_endpoint);
+  const userInfoUrl = convertToBffApiUrl(config, metadata.userinfo_endpoint);
   const response = await fetch(userInfoUrl, {
     method: "GET",
     headers: {
@@ -132,6 +127,7 @@ export async function fetchUserInfo(
 
   return (await response.json()) as Record<string, unknown>;
 }
+
 
 function base64UrlEncode(buffer: Buffer): string {
   return buffer
@@ -160,7 +156,7 @@ async function getMetadata(config: AppConfig): Promise<OidcMetadata> {
   }
 
   const response = await fetch(
-    `${config.bffApiBaseUrl}/api/oidc/.well-known/openid-configuration`,
+    `${config.bffApiBaseUrl}/.well-known/openid-configuration`,
   );
   if (!response.ok) {
     const message = await safeReadBody(response);
@@ -174,26 +170,23 @@ async function getMetadata(config: AppConfig): Promise<OidcMetadata> {
   return metadata;
 }
 
-function buildBffPublicUrl(config: AppConfig, endpoint: string): string {
-  const path = normalizeEndpointPath(endpoint);
-  const url = new URL(`/api/oidc${path}`, ensureTrailingSlash(config.bffPublicUrl));
-  return url.toString();
+function convertToBffApiUrl(config: AppConfig, discoveredUrl: string): string {
+  try {
+    const url = new URL(discoveredUrl);
+    const path = url.pathname + (url.search || "");
+    return `${config.bffApiBaseUrl}${path}`;
+  } catch {
+    return discoveredUrl;
+  }
 }
 
-function buildBffApiUrl(config: AppConfig, endpoint: string): string {
-  const path = normalizeEndpointPath(endpoint);
-  const url = new URL(`/api/oidc${path}`, ensureTrailingSlash(config.bffApiBaseUrl));
-  return url.toString();
+function convertToBffPublicUrl(config: AppConfig, discoveredUrl: string): string {
+  try {
+    const url = new URL(discoveredUrl);
+    const path = url.pathname + (url.search || "");
+    return `${config.bffPublicUrl}${path}`;
+  } catch {
+    return discoveredUrl;
+  }
 }
 
-function normalizeEndpointPath(endpoint: string): string {
-  const url = new URL(endpoint);
-  const pathname = url.pathname === "/" ? "" : url.pathname;
-  return pathname.endsWith("/") && pathname !== "/"
-    ? pathname.slice(0, -1)
-    : pathname;
-}
-
-function ensureTrailingSlash(input: string): string {
-  return input.endsWith("/") ? input : `${input}/`;
-}
