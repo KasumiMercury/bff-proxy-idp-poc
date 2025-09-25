@@ -1,122 +1,81 @@
 import { type NextRequest, NextResponse } from "next/server";
+import { encodeSignedCookie } from "@/lib/auth/cookies";
+import {
+  getCookieSameSite,
+  getSessionSecret,
+  getStateTtlSeconds,
+  isSecureCookies,
+} from "@/lib/auth/env";
+import {
+  buildAuthorizationUrl,
+  createAuthParameters,
+  getOidcConfiguration,
+} from "@/lib/auth/oidc";
+import type { LoginStatePayload } from "@/lib/auth/types";
 
-import { setStateCookie } from "@/features/auth/server/cookies";
-import { createAuthorizationRequest } from "@/features/auth/server/oidc-client";
-import { storeAuthRequest } from "@/features/auth/server/state-store";
-import { getAppBaseUrl } from "@/features/auth/server/url";
-import { applyCorsHeaders, handleCors } from "@/lib/cors";
-import { logInfo } from "@/lib/log";
+const LOGIN_STATE_COOKIE = "bff_login_state";
 
-export async function GET(request: NextRequest): Promise<NextResponse> {
-  const cors = handleCors(request, ["GET"]);
-  if (cors.response) {
-    return cors.response;
-  }
+export const dynamic = "force-dynamic";
 
-  const redirectTo = sanitizeReturnPath(
-    request.nextUrl.searchParams.get("returnTo"),
+export async function GET(request: NextRequest) {
+  return startLogin(request);
+}
+
+export async function POST(request: NextRequest) {
+  return startLogin(request);
+}
+
+async function startLogin(request: NextRequest): Promise<NextResponse> {
+  const returnTo = resolveReturnTo(request);
+  const authParameters = await createAuthParameters(returnTo);
+  const configuration = await getOidcConfiguration();
+  const authorizationUrl = buildAuthorizationUrl(configuration, authParameters);
+
+  const response = NextResponse.redirect(authorizationUrl, { status: 302 });
+  const secret = getSessionSecret();
+
+  const loginPayload: LoginStatePayload = {
+    state: authParameters.state,
+    nonce: authParameters.nonce,
+    codeVerifier: authParameters.codeVerifier,
+    returnTo,
+  };
+
+  const cookieValue = encodeSignedCookie(
+    {
+      payload: loginPayload,
+      issuedAt: Date.now(),
+    },
+    secret,
   );
 
-  const baseUrl = getAppBaseUrl(request);
-  const redirectUri = `${baseUrl}/api/internal/auth/callback`;
-
-  const {
-    authorizationUrl: providerAuthorizationUrl,
-    state,
-    nonce,
-    codeVerifier,
-  } = await createAuthorizationRequest(redirectUri);
-
-  storeAuthRequest({
-    state,
-    nonce,
-    codeVerifier,
-    redirectTo,
+  response.cookies.set({
+    name: LOGIN_STATE_COOKIE,
+    value: cookieValue,
+    httpOnly: true,
+    sameSite: getCookieSameSite(),
+    secure: isSecureCookies(),
+    maxAge: getStateTtlSeconds(),
+    path: "/",
   });
 
-  logInfo("internal-auth/login", "authorization flow initiated", {
-    state,
-    redirectTo,
-    baseUrl,
-  });
-
-  const authorizationUrl = buildProxiedUrl(baseUrl, providerAuthorizationUrl);
-
-  const { location: loginRedirect, cookies: upstreamCookies } =
-    await resolveLoginRedirect(authorizationUrl, request);
-
-  const target = loginRedirect ?? authorizationUrl;
-
-  logInfo("internal-auth/login", "redirecting to authorization flow", {
-    state,
-    target,
-  });
-
-  const response = NextResponse.redirect(target, { status: 302 });
-  for (const cookie of upstreamCookies) {
-    response.headers.append("set-cookie", cookie);
-  }
-  setStateCookie(response, state, request);
-  applyCorsHeaders(response, cors.allowedOrigin, ["GET"], request);
   return response;
 }
 
-export async function OPTIONS(request: NextRequest): Promise<NextResponse> {
-  const cors = handleCors(request, ["GET"]);
-  return cors.response ?? new NextResponse(null, { status: 204 });
-}
-
-function buildProxiedUrl(baseUrl: string, targetUrl: string): string {
-  const parsed = new URL(targetUrl);
-  return `${baseUrl}/api/internal/oidc${parsed.pathname}${parsed.search}`;
-}
-
-function sanitizeReturnPath(returnTo: string | null): string {
-  if (!returnTo) {
-    return "/";
+function resolveReturnTo(request: NextRequest): string {
+  const requested = request.nextUrl.searchParams.get("returnTo") ?? "/";
+  if (requested.startsWith("/")) {
+    return requested;
   }
-  try {
-    const url = new URL(returnTo, "https://example.com");
-    if (url.origin !== "https://example.com") {
-      return "/";
-    }
-    return url.pathname + url.search + url.hash;
-  } catch (_error) {
-    return "/";
-  }
-}
 
-async function resolveLoginRedirect(
-  authorizationUrl: string,
-  request: NextRequest,
-): Promise<{ location: string | null; cookies: string[] }> {
   try {
-    const response = await fetch(authorizationUrl, {
-      method: "GET",
-      headers: buildProxyHeaders(request),
-      redirect: "manual",
-      cache: "no-store",
-    });
-
-    const cookies = response.headers.getSetCookie?.() ?? [];
-    if (response.status >= 300 && response.status < 400) {
-      const location = response.headers.get("location");
-      return { location, cookies };
+    const target = new URL(requested, request.nextUrl.origin);
+    if (target.origin === request.nextUrl.origin) {
+      return `${target.pathname}${target.search}` || "/";
     }
-    return { location: null, cookies };
   } catch (error) {
-    logInfo("internal-auth/login", "failed to resolve login redirect", {
-      error,
-    });
-    return { location: null, cookies: [] };
+    console.warn("Invalid returnTo parameter", error);
   }
-}
 
-function buildProxyHeaders(request: NextRequest): HeadersInit {
-  const headers = new Headers();
-  const cookie = request.headers.get("cookie");
-  if (cookie) {
-    headers.set("cookie", cookie);
-  }
-  return headers;
+  return "/";
 }

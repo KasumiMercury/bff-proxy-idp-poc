@@ -1,124 +1,111 @@
 import { type NextRequest, NextResponse } from "next/server";
-
+import { decodeSignedCookie, encodeSignedCookie } from "@/lib/auth/cookies";
 import {
-  clearStateCookie,
-  readStateCookie,
-  setSessionCookie,
-} from "@/features/auth/server/cookies";
-import {
-  exchangeAuthorizationCode,
-  fetchUserInfo,
-} from "@/features/auth/server/oidc-client";
-import { createSession } from "@/features/auth/server/session-store";
-import { consumeAuthState } from "@/features/auth/server/state-store";
-import { normalizeTokenSet } from "@/features/auth/server/token";
-import { getAppBaseUrl } from "@/features/auth/server/url";
-import { logError, logInfo } from "@/lib/log";
+  getCookieSameSite,
+  getSessionSecret,
+  getSessionTtlSeconds,
+  getStateTtlSeconds,
+  isSecureCookies,
+} from "@/lib/auth/env";
+import { exchangeCode, getOidcConfiguration } from "@/lib/auth/oidc";
+import type { LoginStatePayload, TokenCookiePayload } from "@/lib/auth/types";
 
-export async function GET(request: NextRequest): Promise<NextResponse> {
+const LOGIN_STATE_COOKIE = "bff_login_state";
+const SESSION_COOKIE = "bff_session";
+
+export const dynamic = "force-dynamic";
+
+export async function GET(request: NextRequest) {
+  const secret = getSessionSecret();
+  const loginCookie = request.cookies.get(LOGIN_STATE_COOKIE)?.value;
+  const parsed = decodeSignedCookie<LoginStatePayload>(loginCookie, secret);
+
+  if (!parsed) {
+    return NextResponse.json({ error: "invalid_login_state" }, { status: 400 });
+  }
+
+  const stateTtlMillis = getStateTtlSeconds() * 1000;
+  if (Date.now() - parsed.issuedAt > stateTtlMillis) {
+    return NextResponse.json({ error: "login_state_expired" }, { status: 400 });
+  }
+
   const url = request.nextUrl;
-  const error = url.searchParams.get("error");
-  const stateParam = url.searchParams.get("state");
+  const returnedState = url.searchParams.get("state");
   const code = url.searchParams.get("code");
 
-  const stateCookie = readStateCookie(request);
-
-  logInfo("internal-auth/callback", "authorization response received", {
-    state: stateParam,
-    hasCode: Boolean(code),
-    hasError: Boolean(error),
-  });
-
-  if (error) {
-    return handleAuthError(
-      request,
-      `IDプロバイダからエラーが返却されました: ${error}`,
-    );
+  if (!returnedState || !code || returnedState !== parsed.payload.state) {
+    return NextResponse.json({ error: "invalid_state" }, { status: 400 });
   }
-
-  if (!stateParam || !code) {
-    return handleAuthError(request, "code または state が欠落しています");
-  }
-
-  if (!stateCookie || stateCookie !== stateParam) {
-    return handleAuthError(request, "state が一致しません");
-  }
-
-  const pending = consumeAuthState(stateParam);
-  if (!pending) {
-    return handleAuthError(request, "state が無効または期限切れです");
-  }
-
-  const baseUrl = getAppBaseUrl(request);
-  const redirectUri = `${baseUrl}/api/internal/auth/callback`;
 
   try {
-    const tokenSet = await exchangeAuthorizationCode(
-      redirectUri,
-      {
-        code,
-        state: stateParam,
-      },
-      {
-        state: stateParam,
-        nonce: pending.nonce,
-        codeVerifier: pending.codeVerifier,
-      },
-    );
+    const configuration = await getOidcConfiguration();
+    const currentUrl = new URL(request.url);
+    const tokenResponse = await exchangeCode(configuration, currentUrl, {
+      codeVerifier: parsed.payload.codeVerifier,
+      state: parsed.payload.state,
+      nonce: parsed.payload.nonce,
+    });
 
-    const normalizedTokens = normalizeTokenSet(tokenSet);
-
-    let userInfo: Record<string, unknown> | undefined;
-    try {
-      userInfo = await fetchUserInfo(normalizedTokens.accessToken);
-    } catch (_error) {
-      logError("internal-auth/callback", "failed to fetch user info", {
-        state: stateParam,
-      });
-      userInfo = undefined;
+    const accessToken = tokenResponse.access_token;
+    if (!accessToken) {
+      return NextResponse.json(
+        { error: "missing_access_token" },
+        { status: 502 },
+      );
     }
 
-    const claims = tokenSet.claims();
-    const subject = claims && true ? claims.sub : undefined;
+    const expiresAt = resolveExpiry(tokenResponse);
 
-    const { id: sessionId, cookieValue } = createSession({
-      tokens: normalizedTokens,
-      userInfo,
-      subject,
-    });
+    const tokenPayload: TokenCookiePayload = {
+      accessToken,
+      refreshToken: tokenResponse.refresh_token,
+      idToken: tokenResponse.id_token,
+      scope: tokenResponse.scope,
+      tokenType: tokenResponse.token_type,
+      expiresAt,
+    };
 
-    logInfo("internal-auth/callback", "session established", {
-      state: stateParam,
-      sessionId,
-      subject,
-      redirectTo: pending.redirectTo,
-      userInfoFetched: Boolean(userInfo),
-    });
-
-    const response = NextResponse.redirect(
-      new URL(pending.redirectTo, baseUrl),
+    const sessionCookie = encodeSignedCookie<TokenCookiePayload>(
+      {
+        payload: tokenPayload,
+        issuedAt: Date.now(),
+      },
+      secret,
     );
-    clearStateCookie(response);
-    setSessionCookie(response, cookieValue, request);
+
+    const redirectUrl = new URL(
+      parsed.payload.returnTo,
+      request.nextUrl.origin,
+    );
+    const response = NextResponse.redirect(redirectUrl, {
+      status: 303,
+    });
+
+    response.cookies.set({
+      name: SESSION_COOKIE,
+      value: sessionCookie,
+      httpOnly: true,
+      sameSite: getCookieSameSite(),
+      secure: isSecureCookies(),
+      path: "/",
+      maxAge: getSessionTtlSeconds(),
+    });
+
+    response.cookies.delete({ name: LOGIN_STATE_COOKIE, path: "/" });
+
     return response;
-  } catch (authError) {
-    logError("internal-auth/callback", "authorization code exchange failed", {
-      state: stateParam,
-      error: authError instanceof Error ? authError.message : authError,
-    });
-    return handleAuthError(
-      request,
-      authError instanceof Error ? authError.message : "認証処理に失敗しました",
-    );
+  } catch (error) {
+    console.error("Failed to complete OIDC login", error);
+    return NextResponse.json({ error: "oidc_login_failed" }, { status: 500 });
   }
 }
 
-function handleAuthError(request: NextRequest, message: string): NextResponse {
-  logError("internal-auth/callback", message);
-  const baseUrl = getAppBaseUrl(request);
-  const url = new URL("/auth/error", baseUrl);
-  url.searchParams.set("message", message);
-  const response = NextResponse.redirect(url);
-  clearStateCookie(response);
-  return response;
+function resolveExpiry(tokenResponse: {
+  expires_in?: number;
+}): number | undefined {
+  const { expires_in } = tokenResponse;
+  if (typeof expires_in === "number" && Number.isFinite(expires_in)) {
+    return Math.floor(Date.now() / 1000) + expires_in;
+  }
+  return undefined;
 }

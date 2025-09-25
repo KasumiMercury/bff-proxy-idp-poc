@@ -1,29 +1,252 @@
 {{ define "login" -}}
 <!DOCTYPE html>
-<html>
-    <head>
-        <meta charset="UTF-8">
-        <title>Login</title>
-    </head>
-    <body style="display: flex; align-items: center; justify-content: center; height: 100vh;">
-        <form method="POST" action="/login/username" style="height: 200px; width: 200px;">
+<html lang="ja">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>サインイン</title>
+    <style>
+      :root {
+        color-scheme: dark;
+        font-family: "Inter", "Hiragino Sans", "Helvetica Neue", Arial, sans-serif;
+        --bg: radial-gradient(circle at top, #1f2937, #0f172a);
+        --panel: rgba(15, 23, 42, 0.8);
+        --border: rgba(148, 163, 184, 0.3);
+        --accent: #34d399;
+        --accent-dark: #059669;
+        --text: #f8fafc;
+        --muted: #94a3b8;
+        --error: #fb7185;
+      }
 
-            <input type="hidden" name="id" value="{{.ID}}">
+      * {
+        box-sizing: border-box;
+      }
 
-            <div>
-                <label for="username">Username:</label>
-                <input id="username" name="username" style="width: 100%">
-            </div>
+      body {
+        margin: 0;
+        min-height: 100vh;
+        display: flex;
+        align-items: center;
+        justify-content: center;
+        background: var(--bg);
+        color: var(--text);
+      }
 
-            <div>
-                <label for="password">Password:</label>
-                <input id="password" name="password" style="width: 100%">
-            </div>
+      main {
+        width: 100%;
+        max-width: 360px;
+        padding: 24px;
+      }
 
-            <p style="color:red; min-height: 1rem;">{{.Error}}</p>
+      form {
+        display: flex;
+        flex-direction: column;
+        gap: 16px;
+        padding: 32px 28px;
+        background: var(--panel);
+        border: 1px solid var(--border);
+        border-radius: 16px;
+        box-shadow: 0 30px 60px rgba(15, 23, 42, 0.45);
+        backdrop-filter: blur(16px);
+      }
 
-            <button type="submit">Login</button>
-        </form>
-    </body>
+      h1 {
+        margin: 0 0 4px;
+        font-size: 1.4rem;
+        font-weight: 600;
+        text-align: center;
+      }
+
+      p.subheading {
+        margin: 0;
+        text-align: center;
+        font-size: 0.875rem;
+        color: var(--muted);
+      }
+
+      label {
+        display: block;
+        margin-bottom: 6px;
+        font-size: 0.875rem;
+        font-weight: 600;
+      }
+
+      input {
+        width: 100%;
+        border: 1px solid var(--border);
+        border-radius: 10px;
+        background: rgba(15, 23, 42, 0.6);
+        color: var(--text);
+        padding: 10px 12px;
+        font-size: 0.95rem;
+        transition: border-color 0.2s ease, box-shadow 0.2s ease;
+      }
+
+      input:focus {
+        outline: none;
+        border-color: var(--accent);
+        box-shadow: 0 0 0 3px rgba(52, 211, 153, 0.25);
+      }
+
+      button {
+        margin-top: 8px;
+        border: none;
+        border-radius: 10px;
+        padding: 12px;
+        font-size: 1rem;
+        font-weight: 600;
+        cursor: pointer;
+        background: linear-gradient(135deg, var(--accent), #6ee7b7);
+        color: #022c22;
+        transition: transform 0.15s ease, box-shadow 0.15s ease;
+      }
+
+      button:disabled {
+        opacity: 0.7;
+        cursor: not-allowed;
+        transform: none;
+        box-shadow: none;
+      }
+
+      button:not(:disabled):hover {
+        transform: translateY(-1px);
+        box-shadow: 0 12px 24px rgba(34, 197, 94, 0.3);
+      }
+
+      button:not(:disabled):active {
+        transform: translateY(0);
+      }
+
+      .error {
+        min-height: 1.25rem;
+        font-size: 0.875rem;
+        color: var(--error);
+        text-align: center;
+      }
+
+      .success {
+        min-height: 1.25rem;
+        font-size: 0.875rem;
+        color: var(--accent);
+        text-align: center;
+      }
+    </style>
+  </head>
+  <body>
+    <main>
+      <form id="login-form" action="/login/username" novalidate>
+        <input type="hidden" name="id" value="{{ .ID }}" />
+        <header>
+          <h1>サインイン</h1>
+        </header>
+
+        <section>
+          <label for="username">ユーザー名</label>
+          <input
+            id="username"
+            name="username"
+            type="text"
+            autocomplete="username"
+            required
+          />
+        </section>
+
+        <section>
+          <label for="password">パスワード</label>
+          <input
+            id="password"
+            name="password"
+            type="password"
+            autocomplete="current-password"
+            required
+          />
+        </section>
+
+        <p id="status" class="error" role="alert"></p>
+
+        <button type="submit">サインイン</button>
+        <p id="success" class="success" role="status"></p>
+      </form>
+    </main>
+    <script>
+      (function () {
+        const form = document.getElementById("login-form");
+        if (!form) {
+          return;
+        }
+        const status = document.getElementById("status");
+        const success = document.getElementById("success");
+        const button = form.querySelector("button[type=submit]");
+
+        form.addEventListener("submit", async function (event) {
+          event.preventDefault();
+          if (status) {
+            status.textContent = "";
+          }
+          if (success) {
+            success.textContent = "";
+          }
+
+          const formData = new FormData(form);
+          const payload = {
+            id: formData.get("id"),
+            username: formData.get("username"),
+            password: formData.get("password"),
+          };
+
+          if (button) {
+            button.disabled = true;
+          }
+
+          try {
+            const response = await fetch(form.action, {
+              method: "POST",
+              headers: {
+                "Content-Type": "application/json",
+              },
+              body: JSON.stringify(payload),
+            });
+
+            if (!response.ok) {
+              const message = await response.text();
+              if (status) {
+                status.textContent = message || "サインインに失敗しました";
+              }
+              return;
+            }
+
+            let nextLocation = "";
+            try {
+              const data = await response.json();
+              if (data && typeof data.next === "string") {
+                nextLocation = data.next;
+              }
+            } catch (error) {
+              // ignore invalid body
+            }
+
+            if (success) {
+              success.textContent = "サインインに成功しました";
+            }
+
+            if (nextLocation) {
+              window.location.assign(nextLocation);
+            } else {
+              window.location.reload();
+            }
+          } catch (error) {
+            if (status) {
+              status.textContent = "IDP に接続できませんでした";
+            }
+          } finally {
+            if (button) {
+              button.disabled = false;
+            }
+          }
+        });
+      })();
+    </script>
+  </body>
 </html>
 {{- end }}

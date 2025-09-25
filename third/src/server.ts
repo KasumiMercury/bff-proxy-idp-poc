@@ -164,9 +164,9 @@ app.listen(config.port, () => {
 });
 
 function asyncHandler(
-  handler: (req: Request, res: Response) => Promise<void>,
+  handler: (req: Request, res: Response, next: NextFunction) => Promise<void>,
 ): express.RequestHandler {
   return (req, res, next) => {
-    handler(req, res).catch(next);
+    handler(req, res, next).catch(next);
   };
 }

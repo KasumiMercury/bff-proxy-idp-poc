@@ -1,133 +1,89 @@
 import { type NextRequest, NextResponse } from "next/server";
+import { tokenRevocation } from "openid-client";
 
+import { getOidcConfiguration } from "@/lib/auth/oidc";
 import {
-  clearSessionCookie,
-  readSessionCookie,
-} from "@/features/auth/server/cookies";
-import {
-  endSession,
-  revokeRefreshToken,
-} from "@/features/auth/server/oidc-client";
-import {
-  deleteSession,
-  getSessionFromCookie,
-} from "@/features/auth/server/session-store";
-import { getAppBaseUrl } from "@/features/auth/server/url";
-import { getConfig } from "@/lib/config";
-import { applyCorsHeaders, handleCors } from "@/lib/cors";
-import { logInfo } from "@/lib/log";
+  getSessionCookieName,
+  parseSessionCookie,
+  type SessionState,
+} from "@/lib/auth/session";
 
-const ALLOWED_METHODS = ["GET", "POST"] as const;
+const SESSION_COOKIE = getSessionCookieName();
 
-export async function POST(request: NextRequest): Promise<NextResponse> {
-  const cors = handleCors(request, [...ALLOWED_METHODS]);
-  if (cors.response) {
-    return cors.response;
-  }
-  const response = await performLogout(request);
-  applyCorsHeaders(response, cors.allowedOrigin, [...ALLOWED_METHODS], request);
-  return response;
+export const dynamic = "force-dynamic";
+
+export async function GET(request: NextRequest) {
+  return handleLogout(request);
 }
 
-export async function GET(request: NextRequest): Promise<NextResponse> {
-  const cors = handleCors(request, [...ALLOWED_METHODS]);
-  if (cors.response) {
-    return cors.response;
-  }
-  const response = await performLogout(request);
-  applyCorsHeaders(response, cors.allowedOrigin, [...ALLOWED_METHODS], request);
-  return response;
+export async function POST(request: NextRequest) {
+  return handleLogout(request);
 }
 
-export async function OPTIONS(request: NextRequest): Promise<NextResponse> {
-  const cors = handleCors(request, [...ALLOWED_METHODS]);
-  return cors.response ?? new NextResponse(null, { status: 204 });
-}
+async function handleLogout(request: NextRequest): Promise<NextResponse> {
+  const redirectUrl = resolveReturnTo(request);
+  const sessionCookie = request.cookies.get(SESSION_COOKIE)?.value;
+  const session = parseSessionCookie(sessionCookie);
 
-async function performLogout(request: NextRequest): Promise<NextResponse> {
-  const formData = await readFormData(request);
-  const redirectPath = sanitizeReturnPath(
-    (formData?.get("returnTo") as string | null) ??
-      request.nextUrl.searchParams.get("returnTo"),
-  );
-  const cookieHeader = request.headers.get("cookie");
-  const cookieValue = resolveSessionCookieValue(request, cookieHeader);
-  const session = getSessionFromCookie(cookieValue ?? undefined);
   if (session) {
-    logInfo("internal-auth/logout", "revoking session", {
-      sessionId: session.id,
-      subject: session.subject,
-    });
-    await Promise.allSettled([
-      session.tokens.refreshToken
-        ? revokeRefreshToken(session.tokens.refreshToken)
-        : Promise.resolve(),
-      endSession(session.tokens.idToken),
-    ]);
-    deleteSession(session.id);
-  } else {
-    logInfo("internal-auth/logout", "no active session to revoke", {
-      hasCookie: Boolean(cookieValue),
-      cookieHeader,
+    await revokeTokens(session).catch((error) => {
+      console.error("Failed to revoke tokens", error);
     });
   }
 
-  const baseUrl = getAppBaseUrl(request);
-  const response = NextResponse.redirect(new URL(redirectPath, baseUrl), {
-    status: 303,
-  });
-  clearSessionCookie(response);
+  const response = NextResponse.redirect(redirectUrl, { status: 303 });
+  response.cookies.delete({ name: SESSION_COOKIE, path: "/" });
   return response;
 }
 
-async function readFormData(request: NextRequest): Promise<FormData | null> {
-  if (request.method !== "POST") {
-    return null;
+async function revokeTokens(session: SessionState): Promise<void> {
+  if (!session.tokens.accessToken && !session.tokens.refreshToken) {
+    return;
   }
-  try {
-    return await request.formData();
-  } catch (_error) {
-    return null;
+
+  const configuration = await getOidcConfiguration();
+  const metadata = configuration.serverMetadata();
+
+  if (!metadata.revocation_endpoint) {
+    return;
   }
+
+  const revocationTasks: Promise<void>[] = [];
+
+  if (session.tokens.accessToken) {
+    revocationTasks.push(
+      tokenRevocation(configuration, session.tokens.accessToken, {
+        token_type_hint: "access_token",
+      }),
+    );
+  }
+
+  if (session.tokens.refreshToken) {
+    revocationTasks.push(
+      tokenRevocation(configuration, session.tokens.refreshToken, {
+        token_type_hint: "refresh_token",
+      }),
+    );
+  }
+
+  await Promise.allSettled(revocationTasks);
 }
 
-function resolveSessionCookieValue(
-  request: NextRequest,
-  cookieHeader: string | null,
-): string | null {
-  const direct = readSessionCookie(request);
-  if (direct) {
-    return direct;
-  }
-  if (!cookieHeader) {
-    return null;
-  }
-  const { sessionCookieName } = getConfig();
-  const parts = cookieHeader.split(";");
-  for (const part of parts) {
-    const trimmed = part.trim();
-    if (!trimmed) {
-      continue;
-    }
-    const [name, ...rest] = trimmed.split("=");
-    if (name === sessionCookieName) {
-      return rest.join("=");
-    }
-  }
-  return null;
-}
+function resolveReturnTo(request: NextRequest): URL {
+  const requested = request.nextUrl.searchParams.get("returnTo") ?? "/";
 
-function sanitizeReturnPath(returnTo: string | null): string {
-  if (!returnTo) {
-    return "/";
+  if (requested.startsWith("/")) {
+    return new URL(requested, request.nextUrl.origin);
   }
+
   try {
-    const url = new URL(returnTo, "https://example.com");
-    if (url.origin !== "https://example.com") {
-      return "/";
+    const candidate = new URL(requested, request.nextUrl.origin);
+    if (candidate.origin === request.nextUrl.origin) {
+      return candidate;
     }
-    return url.pathname + url.search + url.hash;
-  } catch (_error) {
-    return "/";
+  } catch (error) {
+    console.warn("Invalid returnTo parameter for logout", error);
   }
+
+  return new URL(request.nextUrl.origin);
 }
