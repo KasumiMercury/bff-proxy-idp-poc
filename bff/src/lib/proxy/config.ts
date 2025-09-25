@@ -9,7 +9,7 @@ import type {
   ProxyConfigurationOverrides,
 } from "./types";
 
-export const DEFAULT_PROXY_PREFIX = "/api/oidc";
+export const DEFAULT_PROXY_PREFIX = "/oidc";
 
 export function getIdpBaseUrl(): URL {
   const value = process.env.IDP_BASE_URL ?? process.env.OIDC_ISSUER_URL;
