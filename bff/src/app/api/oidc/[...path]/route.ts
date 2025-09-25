@@ -1,5 +1,5 @@
 import type { NextRequest } from "next/server";
-import { proxyToIdp } from "@/lib/idpProxy";
+import { proxyToIdp } from "@/lib/proxy";
 
 type RouteParams = {
   path?: string[];
