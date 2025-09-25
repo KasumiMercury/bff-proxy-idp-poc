@@ -24,11 +24,23 @@ export async function proxyToIdp(
 ): Promise<Response> {
   const upstreamBase = getIdpBaseUrl();
 
-  const proxyPrefix = options.proxyPrefix ?? DEFAULT_PROXY_PREFIX;
+  const proxyPrefix = normalizeProxyPrefix(
+    options.proxyPrefix ?? DEFAULT_PROXY_PREFIX,
+  );
   const pathSegments = normalizeSegments(options.pathSegments ?? []);
+  const proxySegments = splitProxyPrefix(proxyPrefix);
+  const remainingSegments = stripLeadingProxySegments(
+    pathSegments,
+    proxySegments,
+  );
+
+  const clientOrigin = request.nextUrl.origin;
 
   const targetUrl = new URL(upstreamBase.toString());
-  targetUrl.pathname = buildTargetPath(upstreamBase.pathname, pathSegments);
+  targetUrl.pathname = buildTargetPath(
+    upstreamBase.pathname,
+    remainingSegments,
+  );
   targetUrl.search = request.nextUrl.search;
 
   const headers = buildForwardHeaders(request);
@@ -49,6 +61,7 @@ export async function proxyToIdp(
   const response = await fetch(targetUrl, init);
 
   const responseHeaders = new Headers(response.headers);
+  const contentType = responseHeaders.get("content-type") ?? "";
   const rewrittenLocation = rewriteLocationHeader(
     responseHeaders.get("location"),
     request,
@@ -59,7 +72,24 @@ export async function proxyToIdp(
     responseHeaders.set("location", rewrittenLocation);
   }
 
-  return new Response(response.body, {
+  let responseBody: BodyInit | null = null;
+
+  if (shouldProcessAsText(contentType)) {
+    const originalBody = await response.text();
+    const rewrittenBody = rewriteTextContent(
+      originalBody,
+      contentType,
+      upstreamBase,
+      proxyPrefix,
+      clientOrigin,
+    );
+    responseHeaders.delete("content-length");
+    responseBody = rewrittenBody;
+  } else {
+    responseBody = response.body;
+  }
+
+  return new Response(responseBody ?? undefined, {
     status: response.status,
     statusText: response.statusText,
     headers: responseHeaders,
@@ -174,4 +204,111 @@ function appendTrailingSlash(url: URL): URL {
     clone.pathname = `${clone.pathname}/`;
   }
   return clone;
+}
+
+function normalizeProxyPrefix(prefix: string): string {
+  if (!prefix.startsWith("/")) {
+    prefix = `/${prefix}`;
+  }
+  if (prefix.endsWith("/")) {
+    return prefix.slice(0, -1);
+  }
+  return prefix;
+}
+
+function shouldProcessAsText(contentType: string): boolean {
+  const normalized = contentType.toLowerCase();
+  return (
+    normalized.startsWith("text/") ||
+    normalized.includes("json") ||
+    normalized.includes("javascript") ||
+    normalized.includes("xml")
+  );
+}
+
+function rewriteTextContent(
+  body: string,
+  contentType: string,
+  upstreamBase: URL,
+  proxyPrefix: string,
+  clientOrigin: string,
+): string {
+  let output = rewriteAbsoluteOriginUrls(
+    body,
+    upstreamBase,
+    proxyPrefix,
+    clientOrigin,
+  );
+
+  if (contentType.toLowerCase().includes("text/html")) {
+    output = rewriteHtmlContent(output, proxyPrefix);
+  }
+
+  return output;
+}
+
+function rewriteHtmlContent(html: string, proxyPrefix: string): string {
+  const escapedPrefix = escapeRegExp(proxyPrefix.slice(1));
+  const doubleQuotedPattern = new RegExp(
+    `(href|src|action)="/(?!(?:${escapedPrefix})(?:/|$))`,
+    "gi",
+  );
+  const singleQuotedPattern = new RegExp(
+    `(href|src|action)='/(?!(?:${escapedPrefix})(?:/|$))`,
+    "gi",
+  );
+
+  const replacement = `$1="${proxyPrefix}/`;
+  const replacementSingle = `$1='${proxyPrefix}/`;
+
+  return html
+    .replace(doubleQuotedPattern, replacement)
+    .replace(singleQuotedPattern, replacementSingle);
+}
+
+function escapeRegExp(value: string): string {
+  return value.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+}
+
+function rewriteAbsoluteOriginUrls(
+  content: string,
+  upstreamBase: URL,
+  proxyPrefix: string,
+  clientOrigin: string,
+): string {
+  const upstreamOriginPattern = new RegExp(
+    `${escapeRegExp(upstreamBase.origin)}`,
+    "g",
+  );
+  const proxyAbsolutePrefix = `${clientOrigin}${proxyPrefix}`;
+
+  return content.replace(upstreamOriginPattern, proxyAbsolutePrefix);
+}
+
+function splitProxyPrefix(prefix: string): string[] {
+  return prefix.split("/").filter(Boolean);
+}
+
+function stripLeadingProxySegments(
+  pathSegments: string[],
+  proxySegments: string[],
+): string[] {
+  if (proxySegments.length === 0) {
+    return [...pathSegments];
+  }
+
+  const remaining = [...pathSegments];
+  let offset = 0;
+
+  while (remaining.length - offset >= proxySegments.length) {
+    const matches = proxySegments.every(
+      (segment, index) => remaining[offset + index] === segment,
+    );
+    if (!matches) {
+      break;
+    }
+    offset += proxySegments.length;
+  }
+
+  return remaining.slice(offset);
 }
