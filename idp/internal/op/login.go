@@ -4,7 +4,6 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
-	"log"
 	"log/slog"
 	"net/http"
 
@@ -51,22 +50,45 @@ func (l *Login) handler(w http.ResponseWriter, r *http.Request) {
 	}
 
 	if err := json.NewDecoder(r.Body).Decode(&payload); err != nil {
-		http.Error(w, "invalid request", http.StatusBadRequest)
+		writeJSONError(w, http.StatusBadRequest, "invalid request")
+		return
+	}
+
+	if payload.ID == "" {
+		writeJSONError(w, http.StatusBadRequest, "auth request id is required")
 		return
 	}
 
 	if payload.Username == "" || payload.Password == "" {
-		http.Error(w, "username and password are required", http.StatusBadRequest)
+		writeJSONError(w, http.StatusBadRequest, "username and password are required")
+		return
 	}
 
 	if err := l.storage.CheckUsernamePassword(payload.Username, payload.Password, payload.ID); err != nil {
 		slog.Error("login failed", "error", err)
-		http.Error(w, "invalid credentials", http.StatusUnauthorized)
+		writeJSONError(w, http.StatusUnauthorized, "invalid credentials")
+		return
 	}
 
-	log.Println(l.callback(r.Context(), payload.ID))
+	next := l.callback(r.Context(), payload.ID)
+	response := struct {
+		Next string `json:"next"`
+	}{
+		Next: next,
+	}
 
-	http.Redirect(w, r, l.callback(r.Context(), payload.ID), http.StatusFound)
+	w.Header().Set("Content-Type", "application/json")
+	if err := json.NewEncoder(w).Encode(response); err != nil {
+		slog.Error("failed to encode login response", "error", err)
+	}
+}
+
+func writeJSONError(w http.ResponseWriter, status int, message string) {
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(status)
+	_ = json.NewEncoder(w).Encode(map[string]string{
+		"error": message,
+	})
 }
 
 func (l *Login) renderLoginPage(w http.ResponseWriter, r *http.Request) {
