@@ -1,9 +1,10 @@
 import type { NextRequest } from "next/server";
 import { getIdpBaseUrl } from "@/lib/proxy/config";
 
-export const dynamic = "force-dynamic";
-
 const PROXY_PREFIX = "/api/oidc";
+const REVALIDATE_SECONDS = 3600;
+
+export const revalidate = REVALIDATE_SECONDS;
 
 interface OidcConfiguration {
   issuer: string;
@@ -25,7 +26,11 @@ export async function GET(request: NextRequest): Promise<Response> {
 
     const configUrl = new URL(".well-known/openid-configuration", upstreamBase);
 
-    const configResponse = await fetch(configUrl.toString());
+    const configResponse = await fetch(configUrl, {
+      cache: "force-cache",
+      next: { revalidate: REVALIDATE_SECONDS },
+      signal: request.signal,
+    });
 
     if (!configResponse.ok) {
       return new Response("Failed to fetch OIDC configuration", {
@@ -38,16 +43,15 @@ export async function GET(request: NextRequest): Promise<Response> {
 
     const rewrittenConfig = rewriteOidcUrls(
       originalConfig,
-      upstreamBase,
-      clientOrigin,
-      PROXY_PREFIX,
+      upstreamBase.origin,
+      `${clientOrigin}${PROXY_PREFIX}`,
     );
 
-    return new Response(JSON.stringify(rewrittenConfig, null, 2), {
+    return Response.json(rewrittenConfig, {
       status: 200,
       headers: {
         "Content-Type": "application/json",
-        "Cache-Control": "public, max-age=3600", // Cache for 1 hour
+        "Cache-Control": `public, max-age=${REVALIDATE_SECONDS}`,
       },
     });
   } catch (error) {
@@ -61,33 +65,39 @@ export async function GET(request: NextRequest): Promise<Response> {
 
 function rewriteOidcUrls(
   config: OidcConfiguration,
-  upstreamBase: URL,
-  clientOrigin: string,
-  proxyPrefix: string,
+  upstreamOrigin: string,
+  proxyOrigin: string,
 ): OidcConfiguration {
-  const result = { ...config };
+  return rewriteValue(config, upstreamOrigin, proxyOrigin) as OidcConfiguration;
+}
 
-  const urlFields = [
-    "issuer",
-    "authorization_endpoint",
-    "token_endpoint",
-    "introspection_endpoint",
-    "userinfo_endpoint",
-    "revocation_endpoint",
-    "end_session_endpoint",
-    "device_authorization_endpoint",
-    "jwks_uri",
-  ];
-
-  for (const field of urlFields) {
-    const value = result[field];
-    if (typeof value === "string" && value.startsWith(upstreamBase.origin)) {
-      result[field] = value.replace(
-        upstreamBase.origin,
-        `${clientOrigin}${proxyPrefix}`,
-      );
+function rewriteValue(
+  value: unknown,
+  upstreamOrigin: string,
+  proxyOrigin: string,
+): unknown {
+  if (typeof value === "string") {
+    if (value.startsWith(upstreamOrigin)) {
+      return `${proxyOrigin}${value.slice(upstreamOrigin.length)}`;
     }
+    return value;
   }
 
-  return result;
+  if (Array.isArray(value)) {
+    return value.map((entry) =>
+      rewriteValue(entry, upstreamOrigin, proxyOrigin),
+    );
+  }
+
+  if (value && typeof value === "object") {
+    const entries = Object.entries(value as Record<string, unknown>).map(
+      ([key, nestedValue]) => [
+        key,
+        rewriteValue(nestedValue, upstreamOrigin, proxyOrigin),
+      ],
+    );
+    return Object.fromEntries(entries);
+  }
+
+  return value;
 }
