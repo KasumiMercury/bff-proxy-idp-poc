@@ -48,7 +48,7 @@ export function traceRequest(
 
 export function traceResponse(
   response: Response,
-  originalHeaders: Headers,
+  originalHeaders: Headers | null,
   modifiedHeaders: Headers,
   options: DebugOptions,
 ) {
@@ -60,7 +60,7 @@ export function traceResponse(
     contentType: response.headers.get("content-type"),
   });
 
-  if (options.enableHeaderTracing) {
+  if (options.enableHeaderTracing && originalHeaders) {
     debugLog(
       "Original response headers",
       "detailed",
@@ -84,11 +84,11 @@ export function traceResponse(
 }
 
 export function traceHeaderProcessing(
-  originalHeaders: Headers,
+  originalHeaders: Headers | null,
   processedHeaders: Headers,
   options: DebugOptions,
 ) {
-  if (!options.enableHeaderTracing) return;
+  if (!options.enableHeaderTracing || !originalHeaders) return;
 
   const changes = compareHeaders(originalHeaders, processedHeaders);
   if (changes.length > 0) {

@@ -75,10 +75,13 @@ export async function proxyToIdp(
 
   traceRequest(request, targetUrl, config.debug);
 
-  const originalHeaders = new Headers(request.headers);
   const headers = buildForwardHeaders(request, config.headers);
 
-  traceHeaderProcessing(originalHeaders, headers, config.debug);
+  traceHeaderProcessing(
+    config.debug.enableHeaderTracing ? request.headers : null,
+    headers,
+    config.debug,
+  );
 
   const hasBody = !(request.method === "GET" || request.method === "HEAD");
   const init: RequestInit = {
@@ -101,7 +104,6 @@ export async function proxyToIdp(
     throw error;
   }
 
-  const originalResponseHeaders = new Headers(response.headers);
   const responseHeaders = new Headers(response.headers);
   const contentType = responseHeaders.get("content-type") ?? "";
 
@@ -155,7 +157,7 @@ export async function proxyToIdp(
 
   traceResponse(
     response,
-    originalResponseHeaders,
+    config.debug.enableHeaderTracing ? response.headers : null,
     responseHeaders,
     config.debug,
   );

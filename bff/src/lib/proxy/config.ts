@@ -78,6 +78,10 @@ export function mergeProxyConfiguration(
   base: ProxyConfiguration,
   override?: ProxyConfigurationOverrides,
 ): ProxyConfiguration {
+  if (!override) {
+    return base;
+  }
+
   return {
     headers: mergeHeaderOptions(base.headers, override?.headers),
     content: mergeContentOptions(base.content, override?.content),

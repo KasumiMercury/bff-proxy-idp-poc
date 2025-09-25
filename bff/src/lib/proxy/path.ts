@@ -163,5 +163,3 @@ function hasControlCharacters(value: string): boolean {
   }
   return false;
 }
-
-export { ProxyPathError };

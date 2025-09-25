@@ -18,17 +18,19 @@ export function buildForwardHeaders(
 ): Headers {
   const headers = new Headers();
 
-  const hopByHopHeaders = new Set([
-    ...DEFAULT_HOP_BY_HOP_HEADERS,
-    ...options.customHopByHopHeaders.map((h) => h.toLowerCase()),
-  ]);
+  const hopByHopHeaders = options.enableHopByHopFiltering
+    ? new Set([...DEFAULT_HOP_BY_HOP_HEADERS, ...options.customHopByHopHeaders])
+    : null;
+
+  const removalHeaders =
+    options.removeHeaders.length > 0 ? new Set(options.removeHeaders) : null;
 
   // Copy request headers with filtering
   for (const [key, value] of request.headers.entries()) {
     const lowerKey = key.toLowerCase();
 
     // Skip hop-by-hop headers if filtering is enabled
-    if (options.enableHopByHopFiltering && hopByHopHeaders.has(lowerKey)) {
+    if (hopByHopHeaders?.has(lowerKey)) {
       continue;
     }
 
@@ -38,10 +40,7 @@ export function buildForwardHeaders(
     }
 
     // Skip headers marked for removal
-    if (
-      options.removeHeaders.includes(key) ||
-      options.removeHeaders.includes(lowerKey)
-    ) {
+    if (removalHeaders?.has(lowerKey)) {
       continue;
     }
 

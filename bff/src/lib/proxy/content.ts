@@ -30,9 +30,23 @@ export function rewriteTextContent(
   options: ContentRewriteOptions,
 ): string {
   let output = body;
+  const lowerContentType = context.contentType.toLowerCase();
+  const isHtml = lowerContentType.includes("text/html");
+  const isJson = lowerContentType.includes("json");
 
-  // Apply absolute URL rewriting if enabled
-  if (options.enableAbsoluteUrlRewriting) {
+  if (options.enableJsonRewriting && isJson) {
+    output = rewriteJsonContent(
+      output,
+      context.upstreamBase,
+      context.proxyPrefix,
+      context.clientOrigin,
+    );
+  }
+
+  if (
+    options.enableAbsoluteUrlRewriting &&
+    output.includes(context.upstreamBase.origin)
+  ) {
     output = rewriteAbsoluteOriginUrls(
       output,
       context.upstreamBase,
@@ -41,28 +55,11 @@ export function rewriteTextContent(
     );
   }
 
-  // Apply HTML-specific rewriting if enabled
-  if (
-    options.enableHtmlRewriting &&
-    context.contentType.toLowerCase().includes("text/html")
-  ) {
+  if (options.enableHtmlRewriting && isHtml) {
     output = rewriteHtmlContent(
       output,
       context.proxyPrefix,
       options.htmlRewritePatterns,
-    );
-  }
-
-  // Apply JSON-specific rewriting if enabled
-  if (
-    options.enableJsonRewriting &&
-    context.contentType.toLowerCase().includes("json")
-  ) {
-    output = rewriteJsonContent(
-      output,
-      context.upstreamBase,
-      context.proxyPrefix,
-      context.clientOrigin,
     );
   }
 
@@ -74,6 +71,15 @@ function rewriteHtmlContent(
   proxyPrefix: string,
   patterns: string[],
 ): string {
+  const needsRewrite = patterns.some(
+    (pattern) =>
+      html.includes(`${pattern}="/`) || html.includes(`${pattern}='/`),
+  );
+
+  if (!needsRewrite) {
+    return html;
+  }
+
   let output = html;
   const escapedPrefix = escapeRegExp(proxyPrefix.slice(1));
 
@@ -104,6 +110,10 @@ function rewriteJsonContent(
   proxyPrefix: string,
   clientOrigin: string,
 ): string {
+  if (!json.includes(upstreamBase.origin)) {
+    return json;
+  }
+
   try {
     const data = JSON.parse(json);
     const rewritten = rewriteJsonUrls(
@@ -162,6 +172,10 @@ function rewriteAbsoluteOriginUrls(
   proxyPrefix: string,
   clientOrigin: string,
 ): string {
+  if (!content.includes(upstreamBase.origin)) {
+    return content;
+  }
+
   const upstreamOriginPattern = new RegExp(
     `${escapeRegExp(upstreamBase.origin)}`,
     "g",
