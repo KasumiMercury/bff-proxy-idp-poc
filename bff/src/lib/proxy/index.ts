@@ -1,11 +1,20 @@
 import type { NextRequest } from "next/server";
 
 import {
+  DEFAULT_PROXY_CONFIGURATION,
   DEFAULT_PROXY_PREFIX,
   getIdpBaseUrl,
+  mergeProxyConfiguration,
   normalizeProxyPrefix,
 } from "./config";
 import { rewriteTextContent, shouldProcessAsText } from "./content";
+import {
+  traceContentRewrite,
+  traceError,
+  traceHeaderProcessing,
+  traceRequest,
+  traceResponse,
+} from "./debug";
 import { buildForwardHeaders } from "./headers";
 import {
   buildTargetPath,
@@ -20,6 +29,11 @@ export async function proxyToIdp(
   request: NextRequest,
   options: Partial<ProxyOptions> = {},
 ): Promise<Response> {
+  // Merge configuration with defaults
+  const config = options.config
+    ? mergeProxyConfiguration(DEFAULT_PROXY_CONFIGURATION, options.config)
+    : DEFAULT_PROXY_CONFIGURATION;
+
   const upstreamBase = getIdpBaseUrl();
   const proxyPrefix = normalizeProxyPrefix(
     options.proxyPrefix ?? DEFAULT_PROXY_PREFIX,
@@ -39,7 +53,12 @@ export async function proxyToIdp(
   );
   targetUrl.search = request.nextUrl.search;
 
-  const headers = buildForwardHeaders(request);
+  traceRequest(request, targetUrl, config.debug);
+
+  const originalHeaders = new Headers(request.headers);
+  const headers = buildForwardHeaders(request, config.headers);
+
+  traceHeaderProcessing(originalHeaders, headers, config.debug);
 
   const hasBody = !(request.method === "GET" || request.method === "HEAD");
   const init: RequestInit = {
@@ -54,8 +73,15 @@ export async function proxyToIdp(
     init.duplex = "half";
   }
 
-  const response = await fetch(targetUrl, init);
+  let response: Response;
+  try {
+    response = await fetch(targetUrl, init);
+  } catch (error) {
+    traceError(error as Error, "upstream fetch", config.debug);
+    throw error;
+  }
 
+  const originalResponseHeaders = new Headers(response.headers);
   const responseHeaders = new Headers(response.headers);
   const contentType = responseHeaders.get("content-type") ?? "";
 
@@ -71,19 +97,44 @@ export async function proxyToIdp(
 
   let responseBody: BodyInit | null = null;
 
-  if (shouldProcessAsText(contentType)) {
-    const originalBody = await response.text();
-    const rewrittenBody = rewriteTextContent(originalBody, {
-      upstreamBase,
-      proxyPrefix,
-      clientOrigin,
-      contentType,
-    });
-    responseHeaders.delete("content-length");
-    responseBody = rewrittenBody;
+  if (shouldProcessAsText(contentType, config.content)) {
+    try {
+      const originalBody = await response.text();
+      const rewrittenBody = rewriteTextContent(
+        originalBody,
+        {
+          upstreamBase,
+          proxyPrefix,
+          clientOrigin,
+          contentType,
+        },
+        config.content,
+      );
+
+      traceContentRewrite(
+        originalBody,
+        rewrittenBody,
+        contentType,
+        config.debug,
+      );
+
+      responseHeaders.delete("content-length");
+      responseBody = rewrittenBody;
+    } catch (error) {
+      traceError(error as Error, "content rewriting", config.debug);
+      // Fall back to original body
+      responseBody = response.body;
+    }
   } else {
     responseBody = response.body;
   }
+
+  traceResponse(
+    response,
+    originalResponseHeaders,
+    responseHeaders,
+    config.debug,
+  );
 
   return new Response(responseBody ?? undefined, {
     status: response.status,
@@ -92,4 +143,11 @@ export async function proxyToIdp(
   });
 }
 
-export type { ProxyOptions } from "./types";
+export {
+  DEFAULT_CONTENT_OPTIONS,
+  DEFAULT_DEBUG_OPTIONS,
+  DEFAULT_HEADER_OPTIONS,
+  DEFAULT_PROXY_CONFIGURATION,
+  mergeProxyConfiguration,
+} from "./config";
+export type { ProxyConfiguration, ProxyOptions } from "./types";

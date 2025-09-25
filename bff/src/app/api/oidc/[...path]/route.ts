@@ -18,6 +18,16 @@ const handler = async (request: NextRequest, context: RouteContext) => {
   return proxyToIdp(request, {
     pathSegments: params?.path ?? [],
     proxyPrefix: PROXY_PREFIX,
+    // @ts-ignore
+    config: {
+      debug: {
+        enableRequestLogging: true,
+        enableResponseLogging: true,
+        enableHeaderTracing: true,
+        enableContentTracing: true,
+        logLevel: "verbose",
+      },
+    },
   });
 };
 
