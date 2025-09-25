@@ -1,5 +1,5 @@
-import type {NextRequest} from "next/server";
-import {getIdpBaseUrl, DEFAULT_PROXY_PREFIX} from "@/lib/proxy/config";
+import type { NextRequest } from "next/server";
+import { DEFAULT_PROXY_PREFIX, getIdpBaseUrl } from "@/lib/proxy/config";
 
 const REVALIDATE_SECONDS = 3600;
 
@@ -28,23 +28,23 @@ export async function GET(request: NextRequest): Promise<Response> {
 
     const configResponse = await fetch(configUrl, {
       cache: "force-cache",
-      next: {revalidate: REVALIDATE_SECONDS},
+      next: { revalidate: REVALIDATE_SECONDS },
       signal: request.signal,
     });
 
     if (!configResponse.ok) {
       return new Response("Failed to fetch OIDC configuration", {
         status: 502,
-        headers: {"Content-Type": "application/json"},
+        headers: { "Content-Type": "application/json" },
       });
     }
 
     const originalConfig = (await configResponse.json()) as OidcConfiguration;
 
     const rewrittenConfig = rewriteOidcUrls(
-        originalConfig,
-        upstreamBase.origin,
-        `${clientOrigin}${DEFAULT_PROXY_PREFIX}`,
+      originalConfig,
+      upstreamBase.origin,
+      `${clientOrigin}${DEFAULT_PROXY_PREFIX}`,
     );
 
     return Response.json(rewrittenConfig, {
@@ -58,23 +58,23 @@ export async function GET(request: NextRequest): Promise<Response> {
     console.error("Error proxying OIDC configuration:", error);
     return new Response("Internal server error", {
       status: 500,
-      headers: {"Content-Type": "application/json"},
+      headers: { "Content-Type": "application/json" },
     });
   }
 }
 
 function rewriteOidcUrls(
-    config: OidcConfiguration,
-    upstreamOrigin: string,
-    proxyOrigin: string,
+  config: OidcConfiguration,
+  upstreamOrigin: string,
+  proxyOrigin: string,
 ): OidcConfiguration {
   return rewriteValue(config, upstreamOrigin, proxyOrigin) as OidcConfiguration;
 }
 
 function rewriteValue(
-    value: unknown,
-    upstreamOrigin: string,
-    proxyOrigin: string,
+  value: unknown,
+  upstreamOrigin: string,
+  proxyOrigin: string,
 ): unknown {
   if (typeof value === "string") {
     if (value.startsWith(upstreamOrigin)) {
@@ -85,16 +85,16 @@ function rewriteValue(
 
   if (Array.isArray(value)) {
     return value.map((entry) =>
-        rewriteValue(entry, upstreamOrigin, proxyOrigin),
+      rewriteValue(entry, upstreamOrigin, proxyOrigin),
     );
   }
 
   if (value && typeof value === "object") {
     const entries = Object.entries(value as Record<string, unknown>).map(
-        ([key, nestedValue]) => [
-          key,
-          rewriteValue(nestedValue, upstreamOrigin, proxyOrigin),
-        ],
+      ([key, nestedValue]) => [
+        key,
+        rewriteValue(nestedValue, upstreamOrigin, proxyOrigin),
+      ],
     );
     return Object.fromEntries(entries);
   }
