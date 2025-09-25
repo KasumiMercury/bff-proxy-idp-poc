@@ -8,7 +8,6 @@ export const dynamic = "force-dynamic";
 const handler = (request: NextRequest) =>
   proxyToIdp(request, {
     proxyPrefix: PROXY_PREFIX,
-    // @ts-ignore
     config: {
       debug: {
         enableRequestLogging: true,

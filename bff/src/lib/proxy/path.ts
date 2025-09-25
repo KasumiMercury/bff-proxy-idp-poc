@@ -1,7 +1,15 @@
 import type { NextRequest } from "next/server";
 
+import { ProxyPathError } from "./errors";
+
 export function normalizeSegments(segments: string[]): string[] {
-  return segments.filter((segment) => Boolean(segment?.trim()));
+  return segments
+    .map((segment) => segment?.trim())
+    .filter((segment): segment is string => Boolean(segment))
+    .map((segment) => {
+      validateSegment(segment);
+      return segment;
+    });
 }
 
 export function buildTargetPath(basePath: string, segments: string[]): string {
@@ -18,6 +26,28 @@ export function buildProxyPath(prefix: string, upstreamPath: string): string {
 
 export function splitProxyPrefix(prefix: string): string[] {
   return prefix.split("/").filter(Boolean);
+}
+
+export function ensureWithinBasePath(basePath: string, targetPath: string) {
+  const normalizedBase = normalizeBasePath(basePath);
+
+  if (normalizedBase === "/") {
+    return;
+  }
+
+  if (targetPath === normalizedBase) {
+    return;
+  }
+
+  const baseWithTrailingSlash = normalizedBase.endsWith("/")
+    ? normalizedBase
+    : `${normalizedBase}/`;
+
+  if (!targetPath.startsWith(baseWithTrailingSlash)) {
+    throw new ProxyPathError(
+      `Resolved upstream path "${targetPath}" escapes base path "${normalizedBase}"`,
+    );
+  }
 }
 
 export function stripLeadingProxySegments(
@@ -82,3 +112,56 @@ function appendTrailingSlash(url: URL): URL {
   }
   return clone;
 }
+
+function normalizeBasePath(pathname: string): string {
+  if (!pathname || pathname === "/") {
+    return "/";
+  }
+
+  let normalized = pathname;
+  if (!normalized.startsWith("/")) {
+    normalized = `/${normalized}`;
+  }
+  if (normalized.endsWith("/")) {
+    normalized = normalized.slice(0, -1);
+  }
+  return normalized;
+}
+
+function validateSegment(segment: string) {
+  let decoded = segment;
+
+  try {
+    decoded = decodeURIComponent(segment);
+  } catch {
+    throw new ProxyPathError(`Invalid encoding in path segment: ${segment}`);
+  }
+
+  if (decoded === "." || decoded === "..") {
+    throw new ProxyPathError("Relative path segments are not allowed");
+  }
+
+  if (decoded.includes("/") || decoded.includes("\\")) {
+    throw new ProxyPathError(
+      "Path separators are not allowed inside proxy segments",
+    );
+  }
+
+  if (hasControlCharacters(decoded)) {
+    throw new ProxyPathError(
+      "Control characters are not allowed in proxy segments",
+    );
+  }
+}
+
+function hasControlCharacters(value: string): boolean {
+  for (let index = 0; index < value.length; index += 1) {
+    const codePoint = value.charCodeAt(index);
+    if (codePoint <= 0x1f || codePoint === 0x7f) {
+      return true;
+    }
+  }
+  return false;
+}
+
+export { ProxyPathError };

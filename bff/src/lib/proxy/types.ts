@@ -1,20 +1,40 @@
-export type ProxyOptions = {
-  pathSegments: string[];
-  proxyPrefix: string;
-  config?: ProxyConfiguration;
-};
-
-export type ProxyConfig = {
-  upstreamBase: URL;
-  proxyPrefix: string;
-  clientOrigin: string;
-};
-
 export type ContentRewriteContext = {
   upstreamBase: URL;
   proxyPrefix: string;
   clientOrigin: string;
   contentType: string;
+};
+
+export type HeaderProcessingOverrides = Partial<
+  Omit<
+    HeaderProcessingOptions,
+    "customHopByHopHeaders" | "customHeaders" | "removeHeaders"
+  >
+> & {
+  customHopByHopHeaders?: string[];
+  removeHeaders?: string[];
+  customHeaders?: Record<string, string | null | undefined>;
+};
+
+export type ContentRewriteOverrides = Partial<
+  Omit<ContentRewriteOptions, "htmlRewritePatterns" | "contentTypeOverrides">
+> & {
+  htmlRewritePatterns?: string[];
+  contentTypeOverrides?: Record<string, boolean | null | undefined>;
+};
+
+export type DebugOverrides = Partial<DebugOptions>;
+
+export type ProxyConfigurationOverrides = {
+  headers?: HeaderProcessingOverrides;
+  content?: ContentRewriteOverrides;
+  debug?: DebugOverrides;
+};
+
+export type ProxyOptions = {
+  pathSegments?: string[];
+  proxyPrefix?: string;
+  config?: ProxyConfigurationOverrides;
 };
 
 export type HeaderProcessingOptions = {

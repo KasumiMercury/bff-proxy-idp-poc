@@ -1,8 +1,12 @@
 import type {
   ContentRewriteOptions,
+  ContentRewriteOverrides,
   DebugOptions,
+  DebugOverrides,
   HeaderProcessingOptions,
+  HeaderProcessingOverrides,
   ProxyConfiguration,
+  ProxyConfigurationOverrides,
 } from "./types";
 
 export const DEFAULT_PROXY_PREFIX = "/api/oidc";
@@ -72,57 +76,205 @@ export const DEFAULT_PROXY_CONFIGURATION: ProxyConfiguration = {
 
 export function mergeProxyConfiguration(
   base: ProxyConfiguration,
-  override?: Partial<ProxyConfiguration>,
+  override?: ProxyConfigurationOverrides,
 ): ProxyConfiguration {
-  if (!override) return base;
-
   return {
-    headers: {
-      enableForwardedHeaders:
-        override.headers?.enableForwardedHeaders ??
-        base.headers.enableForwardedHeaders,
-      enableHopByHopFiltering:
-        override.headers?.enableHopByHopFiltering ??
-        base.headers.enableHopByHopFiltering,
-      customHopByHopHeaders:
-        override.headers?.customHopByHopHeaders ??
-        base.headers.customHopByHopHeaders,
-      forwardedHeadersPolicy:
-        override.headers?.forwardedHeadersPolicy ??
-        base.headers.forwardedHeadersPolicy,
-      customHeaders:
-        override.headers?.customHeaders ?? base.headers.customHeaders,
-      removeHeaders:
-        override.headers?.removeHeaders ?? base.headers.removeHeaders,
-    },
-    content: {
-      enableHtmlRewriting:
-        override.content?.enableHtmlRewriting ??
-        base.content.enableHtmlRewriting,
-      enableJsonRewriting:
-        override.content?.enableJsonRewriting ??
-        base.content.enableJsonRewriting,
-      enableAbsoluteUrlRewriting:
-        override.content?.enableAbsoluteUrlRewriting ??
-        base.content.enableAbsoluteUrlRewriting,
-      htmlRewritePatterns:
-        override.content?.htmlRewritePatterns ??
-        base.content.htmlRewritePatterns,
-      contentTypeOverrides:
-        override.content?.contentTypeOverrides ??
-        base.content.contentTypeOverrides,
-    },
-    debug: {
-      enableRequestLogging:
-        override.debug?.enableRequestLogging ?? base.debug.enableRequestLogging,
-      enableResponseLogging:
-        override.debug?.enableResponseLogging ??
-        base.debug.enableResponseLogging,
-      enableHeaderTracing:
-        override.debug?.enableHeaderTracing ?? base.debug.enableHeaderTracing,
-      enableContentTracing:
-        override.debug?.enableContentTracing ?? base.debug.enableContentTracing,
-      logLevel: override.debug?.logLevel ?? base.debug.logLevel,
-    },
+    headers: mergeHeaderOptions(base.headers, override?.headers),
+    content: mergeContentOptions(base.content, override?.content),
+    debug: mergeDebugOptions(base.debug, override?.debug),
   };
+}
+
+function mergeHeaderOptions(
+  base: HeaderProcessingOptions,
+  override?: HeaderProcessingOverrides,
+): HeaderProcessingOptions {
+  const merged = cloneHeaderOptions(base);
+
+  if (!override) {
+    return merged;
+  }
+
+  if (override.enableForwardedHeaders !== undefined) {
+    merged.enableForwardedHeaders = override.enableForwardedHeaders;
+  }
+  if (override.enableHopByHopFiltering !== undefined) {
+    merged.enableHopByHopFiltering = override.enableHopByHopFiltering;
+  }
+  if (override.forwardedHeadersPolicy) {
+    merged.forwardedHeadersPolicy = override.forwardedHeadersPolicy;
+  }
+  if (override.customHopByHopHeaders) {
+    merged.customHopByHopHeaders = normalizeHeaderList(
+      override.customHopByHopHeaders,
+    );
+  }
+  if (override.removeHeaders) {
+    merged.removeHeaders = normalizeHeaderList(override.removeHeaders);
+  }
+  if (override.customHeaders) {
+    merged.customHeaders = mergeCustomHeaders(
+      merged.customHeaders,
+      override.customHeaders,
+    );
+  }
+
+  return merged;
+}
+
+function mergeContentOptions(
+  base: ContentRewriteOptions,
+  override?: ContentRewriteOverrides,
+): ContentRewriteOptions {
+  const merged = cloneContentOptions(base);
+
+  if (!override) {
+    return merged;
+  }
+
+  if (override.enableHtmlRewriting !== undefined) {
+    merged.enableHtmlRewriting = override.enableHtmlRewriting;
+  }
+  if (override.enableJsonRewriting !== undefined) {
+    merged.enableJsonRewriting = override.enableJsonRewriting;
+  }
+  if (override.enableAbsoluteUrlRewriting !== undefined) {
+    merged.enableAbsoluteUrlRewriting = override.enableAbsoluteUrlRewriting;
+  }
+  if (override.htmlRewritePatterns) {
+    merged.htmlRewritePatterns = [...override.htmlRewritePatterns];
+  }
+  if (override.contentTypeOverrides) {
+    const overrides: Record<string, boolean> = {
+      ...merged.contentTypeOverrides,
+    };
+
+    for (const [key, value] of Object.entries(override.contentTypeOverrides)) {
+      const normalizedKey = key.trim().toLowerCase();
+      if (!normalizedKey) {
+        continue;
+      }
+
+      if (value === null || value === undefined) {
+        delete overrides[normalizedKey];
+        continue;
+      }
+
+      overrides[normalizedKey] = value;
+    }
+
+    merged.contentTypeOverrides = overrides;
+  }
+
+  return merged;
+}
+
+function mergeDebugOptions(
+  base: DebugOptions,
+  override?: DebugOverrides,
+): DebugOptions {
+  const merged = { ...base };
+
+  if (!override) {
+    return merged;
+  }
+
+  if (override.enableRequestLogging !== undefined) {
+    merged.enableRequestLogging = override.enableRequestLogging;
+  }
+  if (override.enableResponseLogging !== undefined) {
+    merged.enableResponseLogging = override.enableResponseLogging;
+  }
+  if (override.enableHeaderTracing !== undefined) {
+    merged.enableHeaderTracing = override.enableHeaderTracing;
+  }
+  if (override.enableContentTracing !== undefined) {
+    merged.enableContentTracing = override.enableContentTracing;
+  }
+  if (override.logLevel) {
+    merged.logLevel = override.logLevel;
+  }
+
+  return merged;
+}
+
+function normalizeHeaderList(entries: string[]): string[] {
+  const result: string[] = [];
+  const seen = new Set<string>();
+
+  for (const entry of entries) {
+    const normalized = entry.trim().toLowerCase();
+    if (!normalized) {
+      continue;
+    }
+    if (!seen.has(normalized)) {
+      seen.add(normalized);
+      result.push(normalized);
+    }
+  }
+
+  return result;
+}
+
+function mergeCustomHeaders(
+  base: Record<string, string>,
+  override: Record<string, string | null | undefined>,
+): Record<string, string> {
+  const merged = { ...base };
+
+  for (const [key, value] of Object.entries(override)) {
+    const normalizedKey = key.trim();
+    if (!normalizedKey) {
+      continue;
+    }
+
+    const existingKey = findExistingHeaderKey(merged, normalizedKey);
+
+    if (value === null || value === undefined) {
+      if (existingKey) {
+        delete merged[existingKey];
+      }
+      continue;
+    }
+
+    const targetKey = existingKey ?? normalizedKey;
+    merged[targetKey] = value;
+  }
+
+  return merged;
+}
+
+function cloneHeaderOptions(
+  options: HeaderProcessingOptions,
+): HeaderProcessingOptions {
+  return {
+    enableForwardedHeaders: options.enableForwardedHeaders,
+    enableHopByHopFiltering: options.enableHopByHopFiltering,
+    customHopByHopHeaders: [...options.customHopByHopHeaders],
+    forwardedHeadersPolicy: options.forwardedHeadersPolicy,
+    customHeaders: { ...options.customHeaders },
+    removeHeaders: [...options.removeHeaders],
+  };
+}
+
+function cloneContentOptions(
+  options: ContentRewriteOptions,
+): ContentRewriteOptions {
+  return {
+    enableHtmlRewriting: options.enableHtmlRewriting,
+    enableJsonRewriting: options.enableJsonRewriting,
+    enableAbsoluteUrlRewriting: options.enableAbsoluteUrlRewriting,
+    htmlRewritePatterns: [...options.htmlRewritePatterns],
+    contentTypeOverrides: { ...options.contentTypeOverrides },
+  };
+}
+
+function findExistingHeaderKey(
+  headers: Record<string, string>,
+  candidate: string,
+): string | undefined {
+  const candidateLower = candidate.toLowerCase();
+  return Object.keys(headers).find(
+    (key) => key.toLowerCase() === candidateLower,
+  );
 }

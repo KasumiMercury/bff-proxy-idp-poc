@@ -15,9 +15,11 @@ import {
   traceRequest,
   traceResponse,
 } from "./debug";
+import { ProxyPathError } from "./errors";
 import { buildForwardHeaders } from "./headers";
 import {
   buildTargetPath,
+  ensureWithinBasePath,
   normalizeSegments,
   rewriteLocationHeader,
   splitProxyPrefix,
@@ -27,30 +29,48 @@ import type { ProxyOptions } from "./types";
 
 export async function proxyToIdp(
   request: NextRequest,
-  options: Partial<ProxyOptions> = {},
+  options: ProxyOptions = {},
 ): Promise<Response> {
   // Merge configuration with defaults
-  const config = options.config
-    ? mergeProxyConfiguration(DEFAULT_PROXY_CONFIGURATION, options.config)
-    : DEFAULT_PROXY_CONFIGURATION;
+  const config = mergeProxyConfiguration(
+    DEFAULT_PROXY_CONFIGURATION,
+    options.config,
+  );
 
   const upstreamBase = getIdpBaseUrl();
   const proxyPrefix = normalizeProxyPrefix(
     options.proxyPrefix ?? DEFAULT_PROXY_PREFIX,
   );
-  const pathSegments = normalizeSegments(options.pathSegments ?? []);
+  let pathSegments: string[];
+  try {
+    pathSegments = normalizeSegments(options.pathSegments ?? []);
+  } catch (error) {
+    traceError(error as Error, "path normalization", config.debug);
+    if (error instanceof ProxyPathError) {
+      return new Response("Invalid proxy path", { status: 400 });
+    }
+    throw error;
+  }
   const proxySegments = splitProxyPrefix(proxyPrefix);
   const remainingSegments = stripLeadingProxySegments(
     pathSegments,
     proxySegments,
   );
   const clientOrigin = request.nextUrl.origin;
-
   const targetUrl = new URL(upstreamBase.toString());
-  targetUrl.pathname = buildTargetPath(
-    upstreamBase.pathname,
-    remainingSegments,
-  );
+  const targetPath = buildTargetPath(upstreamBase.pathname, remainingSegments);
+
+  try {
+    ensureWithinBasePath(upstreamBase.pathname, targetPath);
+  } catch (error) {
+    traceError(error as Error, "path normalization", config.debug);
+    if (error instanceof ProxyPathError) {
+      return new Response("Invalid proxy path", { status: 400 });
+    }
+    throw error;
+  }
+
+  targetUrl.pathname = targetPath;
   targetUrl.search = request.nextUrl.search;
 
   traceRequest(request, targetUrl, config.debug);
@@ -98,8 +118,9 @@ export async function proxyToIdp(
   let responseBody: BodyInit | null = null;
 
   if (shouldProcessAsText(contentType, config.content)) {
+    const responseClone = response.clone();
     try {
-      const originalBody = await response.text();
+      const originalBody = await responseClone.text();
       const rewrittenBody = rewriteTextContent(
         originalBody,
         {
@@ -119,6 +140,9 @@ export async function proxyToIdp(
       );
 
       responseHeaders.delete("content-length");
+      responseHeaders.delete("content-encoding");
+      responseHeaders.delete("etag");
+      responseHeaders.delete("accept-ranges");
       responseBody = rewrittenBody;
     } catch (error) {
       traceError(error as Error, "content rewriting", config.debug);
